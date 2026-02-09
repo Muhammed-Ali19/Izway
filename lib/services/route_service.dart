@@ -99,7 +99,8 @@ class RouteService {
       "shape_format": "polyline6",
       "units": "kilometers",
       "format": "json",
-      "id": labelPrefix
+      "id": labelPrefix,
+      "annotations": ["admins"]
     };
 
     final String urlString = _proxyUrl;
@@ -130,15 +131,54 @@ class RouteService {
     List<RouteStep> allSteps = [];
     List<int> allSpeedLimits = [];
 
+    List<MapEntry<int, String>> borderCrossings = [];
+    
+    // Admins list (Country codes)
+    // trip['admins'] contains list of admin objects: [{"iso_3166_1": "FR", ...}, ...]
+    List<String> adminIsoCodes = [];
+    if (trip['admins'] != null) {
+      for (var admin in trip['admins']) {
+        adminIsoCodes.add(admin['iso_3166_1'] ?? "??");
+      }
+    }
+
+    int globalPointIndex = 0;
+    int lastAdminIndex = -1;
+
     for (int i = 0; i < legs.length; i++) {
       final leg = legs[i];
       final String? shape = leg['shape'];
       if (shape == null || shape.isEmpty) continue;
       
-
-      // Décodage de la polyline avec indice de position pour auto-détection précision
+      // Décodage de la polyline
       final List<LatLng> decodedPoints = _decodePolyline(shape, hint: start);
       allPoints.addAll(decodedPoints);
+      
+      // Border Crossing Detection via Annotations
+      if (leg['annotation'] != null && leg['annotation']['admins'] != null) {
+        final List<dynamic> adminIndices = leg['annotation']['admins'];
+        
+        // Valhalla returns admin index for each shape point (or close to it)
+        // We match them with decoded points. Warning: counts might slightly defer if decoding differs.
+        // We act defensively.
+        
+        for (int j = 0; j < adminIndices.length && j < decodedPoints.length; j++) {
+           int currentAdminIndex = adminIndices[j] as int;
+           
+           if (lastAdminIndex != -1 && currentAdminIndex != lastAdminIndex) {
+             // Border Detected!
+             if (currentAdminIndex < adminIsoCodes.length) {
+               String country = adminIsoCodes[currentAdminIndex];
+               // We record the crossings at the current global index
+               borderCrossings.add(MapEntry(globalPointIndex + j, country));
+               // print("Border Crossing Detected at index ${globalPointIndex + j}: $country");
+             }
+           }
+           lastAdminIndex = currentAdminIndex;
+        }
+      }
+      
+      globalPointIndex += decodedPoints.length;
 
       // Parsing Maneuvers (Steps)
       if (leg['maneuvers'] != null) {
@@ -184,6 +224,8 @@ class RouteService {
         label: labelPrefix,
         speedLimits: allSpeedLimits,
         steps: allSteps,
+        borderCrossings: borderCrossings,
+        countries: adminIsoCodes.where((c) => c != "??").toSet().toList(),
       )
     ];
   }

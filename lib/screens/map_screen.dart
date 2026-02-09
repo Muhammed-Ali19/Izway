@@ -71,7 +71,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   bool _isFollowingUser = true;
   LatLng? _destination;
   List<String> _tripFlags = [];
-  List<CountrySegment> _countrySegments = [];
   String? _nextBorderDist;
   String? _nextBorderFlag;
   
@@ -345,7 +344,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
     
     // Check next border distance
-    if (_countrySegments.isNotEmpty) {
+    if (_routes.isNotEmpty) {
       _checkNextBorder(newPos);
     }
 
@@ -397,42 +396,57 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   void _checkNextBorder(LatLng userPos) {
-    if (_countrySegments.length < 2) return; // Only 1 country or empty
-
-    // Find next segment that is NOT the current country
-    // Simple logic: find closest segment start point that is ahead?
-    // Or just look at the list sequentially. 
-    // Optimization: Assume segments are ordered.
+    if (_routes.isEmpty) return;
     
-    // Current country code?
-    // We iterate to find the first segment where country code != current detected code
-    // actually segments are [FR, DE, AT]
-    
-    for (int i = 0; i < _countrySegments.length; i++) {
-        final seg = _countrySegments[i];
-        
-        // Skip current country
-        if (seg.countryCode == _countrySegments.first.countryCode && i == 0) continue;
+    final route = _routes[_selectedRouteIndex];
+    if (route.borderCrossings == null || route.borderCrossings!.isEmpty) return;
 
-        // Calculate real distance along route
-        if (_routes.isNotEmpty) {
-           double realDist = _locationService.distanceAlongRoute(
-              userPos, 
-              seg.startPosition, 
-              _routes[_selectedRouteIndex].points
-           );
+    // Find closest point index on route
+    final int currentIdx = _locationService.findClosestPointIndex(userPos, route.points);
+    if (currentIdx == -1) return;
 
-           if (realDist > 500) { // If more than 500m away
-              final dKm = (realDist / 1000).toStringAsFixed(1);
-              setState(() {
-                 _nextBorderDist = "$dKm km";
-                 _nextBorderFlag = _countryService.getFlagEmoji(seg.countryCode);
-              });
-              return;
-           }
-        }
+    // Find next crossing after current index
+    MapEntry<int, String>? nextCrossing;
+    for (var crossing in route.borderCrossings!) {
+      if (crossing.key > currentIdx) {
+        nextCrossing = crossing;
+        break;
+      }
     }
-    // No more borders detected
+
+    if (nextCrossing != null) {
+       // Calculate GRAPH distance (along the path)
+       double dist = 0;
+       // 1. Dist from user to currentIdx point
+       dist += _locationService.distanceBetween(userPos, route.points[currentIdx]);
+       
+       // 2. Sum segments from currentIdx to crossing.key
+       // Optimization: limit to 200km check to avoid huge loops? 
+       // For now, simple loop is fast enough for < 10k points usually.
+       for (int i = currentIdx; i < nextCrossing.key; i++) {
+         if (i + 1 < route.points.length) {
+            dist += _locationService.distanceBetween(route.points[i], route.points[i+1]);
+         }
+       }
+
+       if (dist > 500) { // Show if > 500m
+          final dKm = (dist / 1000).toStringAsFixed(1);
+          setState(() {
+             _nextBorderDist = "$dKm km";
+             _nextBorderFlag = _countryService.getFlagEmoji(nextCrossing!.value); // country code
+          });
+          return;
+       } else {
+         // Si on est à < 500m, on peut considérer qu'on y est presque ou qu'on affiche "0 km"
+         setState(() {
+            _nextBorderDist = "${dist.round()} m";
+            _nextBorderFlag = _countryService.getFlagEmoji(nextCrossing!.value);
+         });
+         return;
+       }
+    }
+
+    // No pending border found
     if (_nextBorderDist != null) {
       setState(() {
         _nextBorderDist = null;
@@ -553,8 +567,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _isFollowingUser = true;
         }
 
-        // 3. Calculer les pays traversés (Async)
-        _calculateCountries(routes.first.points);
+        // 3. Calculer les pays traversés (Directement depuis Valhalla)
+        final uniqueCountries = routes.first.countries.toSet().toList(); // Dedoublonnage au cas où
+        _tripFlags = uniqueCountries.map((c) => _countryService.getFlagEmoji(c)).toList();
 
         // 4. Récupérer les radars sur TOUTE la route (Async)
         _fetchRouteAlerts(routes.first.points);
@@ -572,19 +587,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       }
   }
 
-  Future<void> _calculateCountries(List<LatLng> points) async {
-    setState(() => _isCalculatingCountries = true);
-    final segments = await _countryService.getCountrySegments(points);
-    final flags = segments.map((s) => _countryService.getFlagEmoji(s.countryCode)).toSet().toList(); // unique flags
-    
-    if (mounted) {
-      setState(() {
-         _countrySegments = segments;
-         _tripFlags = flags;
-         _isCalculatingCountries = false;
-      });
-    }
-  }
 
   void _startNavigation() {
     if (_currentPosition == null) return;
@@ -799,6 +801,28 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       height: 50,
                       child: const Icon(Icons.location_on, color: Colors.red, size: 40),
                     ),
+                  
+                  // Border Crossing Markers
+                  if (_routes.isNotEmpty && _routes[_selectedRouteIndex].borderCrossings != null)
+                    ..._routes[_selectedRouteIndex].borderCrossings!.map((crossing) {
+                       final pos = _routes[_selectedRouteIndex].points[crossing.key];
+                       final flag = _countryService.getFlagEmoji(crossing.value);
+                       
+                       return Marker(
+                         point: pos,
+                         width: 40,
+                         height: 40,
+                         child: Container(
+                           decoration: BoxDecoration(
+                             color: Colors.white,
+                             shape: BoxShape.circle,
+                             boxShadow: const [BoxShadow(blurRadius: 3, color: Colors.black26)],
+                             border: Border.all(color: Colors.black, width: 1),
+                           ),
+                           child: Center(child: Text(flag, style: const TextStyle(fontSize: 20))),
+                         ),
+                       );
+                    }),
                   
                   // Alerts (User + Traffic)
                   ...[..._nearbyAlerts, ..._trafficAlerts].where((a) => !_alertService.isHidden(a.id)).map((alert) {
