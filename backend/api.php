@@ -63,9 +63,6 @@ elseif ($method === 'POST') {
     $rawInput = file_get_contents('php://input');
     $input = json_decode($rawInput, true);
     
-    // LOG REQUEST
-    $logAction = $input['action'] ?? 'none';
-    error_log("Backend Request: $method Action: $logAction Input: " . substr($rawInput, 0, 100));
 
     if (!$input) {
         http_response_code(400);
@@ -121,11 +118,48 @@ elseif ($method === 'POST') {
             if (isset($input['viewbox'])) {
                 $url .= "&viewbox=" . $input['viewbox'];
             }
+            
             $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, ['User-Agent: com.alihirlak.gpsfrontiere']);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'User-Agent: GPSFrontiere/3.1 (contact: alihirlak@gps-frontiere.com)',
+                'Referer: https://gps-frontiere.alihirlak.com/',
+                'Accept: application/json'
+            ]);
             $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
+
+            // Fallback vers Photon si Nominatim bloque (418, 429, etc.)
+            if ($httpCode !== 200 || empty($response) || $response === '[]') {
+                $photonUrl = "https://photon.komoot.io/api/?q=" . urlencode($query) . "&limit=10";
+                $ch2 = curl_init($photonUrl);
+                curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch2, CURLOPT_HTTPHEADER, ['User-Agent: GPSFrontiere/3.1']);
+                $photonRes = curl_exec($ch2);
+                curl_close($ch2);
+                
+                if (!empty($photonRes)) {
+                    $pData = json_decode($photonRes, true);
+                    $results = [];
+                    if (isset($pData['features'])) {
+                        foreach ($pData['features'] as $f) {
+                            $props = $f['properties'];
+                            $results[] = [
+                                'lat' => $f['geometry']['coordinates'][1],
+                                'lon' => $f['geometry']['coordinates'][0],
+                                'display_name' => ($props['name'] ?? '') . ", " . ($props['city'] ?? $props['state'] ?? '') . " " . ($props['country'] ?? ''),
+                                'address' => [
+                                    'road' => $props['street'] ?? $props['name'] ?? '',
+                                    'city' => $props['city'] ?? '',
+                                    'country' => $props['country'] ?? ''
+                                ]
+                            ];
+                        }
+                    }
+                    die(json_encode($results));
+                }
+            }
             die($response);
 
         case 'reverse_proxy':
@@ -134,7 +168,10 @@ elseif ($method === 'POST') {
             $url = "https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon&zoom=10";
             $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, ['User-Agent: com.alihirlak.gpsfrontiere']);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer: https://gps-frontiere.alihirlak.com/'
+            ]);
             $response = curl_exec($ch);
             curl_close($ch);
             die($response);
@@ -147,7 +184,7 @@ elseif ($method === 'POST') {
             curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($input['payload']));
             curl_setopt($ch, CURLOPT_HTTPHEADER, [
                 'Content-Type: application/json',
-                'User-Agent: com.alihirlak.gpsfrontiere'
+                'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             ]);
             $response = curl_exec($ch);
             if (curl_errno($ch)) {

@@ -781,7 +781,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       return Polyline(
                         points: route.points,
                         strokeWidth: isSelected ? 8.0 : 4.0,
-                        color: isSelected ? const Color(0xFF2196F3) : Colors.blueGrey,
+                        color: isSelected ? const Color(0xFF2196F3) : Colors.blueGrey.withOpacity(0.6),
+                        borderStrokeWidth: isSelected ? 2.0 : 0.0,
+                        borderColor: Colors.white.withOpacity(0.4),
                       );
                     }),
                 ],
@@ -889,13 +891,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             SearchResults(
               results: _searchResults,
               onResultSelected: (res) {
-                 print("DEBUG: Result selected: ${res.displayName} (${res.lat}, ${res.lon})");
-                 FocusScope.of(context).unfocus();
+                  FocusScope.of(context).unfocus();
                  _calculateRoutes(LatLng(res.lat, res.lon));
               },
             ),
 
-          /*
           // Navigation Instruction (si en nav)
           if (_isNavigationMode && 
               _routes.isNotEmpty && 
@@ -918,7 +918,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                  nextBorderFlag: _nextBorderFlag,
                ),
              ),
-          */
 
           // Radar Zone Warning
           if (_isInRadarZone)
@@ -1075,17 +1074,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               ),
             ),
 
-          // DEBUG BUTTON
-          Positioned(
-            top: 250,
-            right: 16,
-            child: FloatingActionButton(
-              heroTag: 'debug_lyon',
-              onPressed: () => _calculateRoutes(const LatLng(45.7640, 4.8357)),
-              backgroundColor: Colors.red,
-              child: const Text("LYON"),
-            ),
-          ),
         ],
       ),
     );

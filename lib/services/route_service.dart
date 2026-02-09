@@ -9,7 +9,6 @@ class RouteService {
 
   // Calculer plusieurs routes avec alternatives
   Future<List<RouteInfo>> calculateRoutes(LatLng start, LatLng destination) async {
-    print("DEBUG: calculateRoutes START (from ${start.latitude},${start.longitude} to ${destination.latitude},${destination.longitude})");
     List<RouteInfo> allRoutes = [];
     
     try {
@@ -105,7 +104,6 @@ class RouteService {
 
     final String urlString = _proxyUrl;
     
-    print("Valhalla Proxy Request ($labelPrefix) -> $urlString");
 
     final response = await _client.post(
       Uri.parse(urlString),
@@ -118,9 +116,6 @@ class RouteService {
       }),
     ).timeout(const Duration(seconds: 15));
     
-    print("Valhalla Status: ${response.statusCode}");
-    print("Valhalla Headers: ${response.headers}");
-    print("Valhalla Response Body Snippet: ${response.body.length > 300 ? response.body.substring(0, 300) : response.body}");
 
     final data = json.decode(response.body);
     if (data['trip'] == null || data['trip']['legs'] == null) {
@@ -138,10 +133,8 @@ class RouteService {
     for (int i = 0; i < legs.length; i++) {
       final leg = legs[i];
       final String? shape = leg['shape'];
-      print("DEBUG: Parsing Leg $i, shape is ${shape != null ? 'len=${shape.length}' : 'NULL'}");
       if (shape == null || shape.isEmpty) continue;
       
-      print("Shape snippet: ${shape.length > 100 ? shape.substring(0, 100) : shape}");
 
       // Décodage de la polyline avec indice de position pour auto-détection précision
       final List<LatLng> decodedPoints = _decodePolyline(shape, hint: start);
@@ -182,13 +175,6 @@ class RouteService {
       }
     }
 
-    print("Valhalla Result ($labelPrefix): ${allPoints.length} points");
-    if (allPoints.isNotEmpty) {
-      print("First point: ${allPoints.first}");
-      print("Last point: ${allPoints.last}");
-    } else {
-      print("ATTENTION: Aucun point valide après décodage !");
-    }
 
     return [
       RouteInfo(
@@ -228,7 +214,6 @@ class RouteService {
     if (hint != null && points.isNotEmpty) {
       final d = _calculateSimpleDist(hint, points.first);
       if (d > 5.0) { // Si > 5 degrés de différence, probabilité de précision 1e5
-        print("Valhalla Polyline: Précision 1e6 semble incorrecte (dist: $d). Essai 1e5...");
         points = _decodeWithPrecision(encoded, 1e5);
       }
     } else if (points.isEmpty) {
