@@ -1,9 +1,9 @@
-header("Content-Type: application/json");
+<?php
 header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Headers: Content-Type");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+header("Content-Type: application/json; charset=UTF-8");
 
-// Gestion du Preflight CORS
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
@@ -28,6 +28,7 @@ $options = [
     PDO::ATTR_EMULATE_PREPARES   => false,
 ];
 
+$pdo = null;
 try {
     $pdo = new PDO($dsn, $user, $pass, $options);
     
@@ -36,15 +37,18 @@ try {
         $pdo->exec("DELETE FROM alerts WHERE timestamp < DATE_SUB(NOW(), INTERVAL 2 HOUR)");
         $pdo->exec("DELETE FROM user_positions WHERE last_seen < DATE_SUB(NOW(), INTERVAL 5 MINUTE)");
     }
-
 } catch (\PDOException $e) {
-    http_response_code(500);
-    die(json_encode(["error" => "Erreur de connexion BDD: " . $e->getMessage()]));
+    // On ne die pas tout de suite pour permettre le fonctionnement des proxies
+    $dbError = $e->getMessage();
 }
 
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'GET') {
+    if (!$pdo) {
+        // Renvoie une liste vide au lieu d'une erreur 503
+        die(json_encode([]));
+    }
     try {
         // Récupérer alertes récentes
         $query = "SELECT * FROM alerts WHERE timestamp > DATE_SUB(NOW(), INTERVAL 2 HOUR) AND (upvotes - downvotes) > -3 ORDER BY timestamp DESC";
@@ -56,8 +60,13 @@ if ($method === 'GET') {
     }
 } 
 elseif ($method === 'POST') {
-    $input = json_decode(file_get_contents('php://input'), true);
+    $rawInput = file_get_contents('php://input');
+    $input = json_decode($rawInput, true);
     
+    // LOG REQUEST
+    $logAction = $input['action'] ?? 'none';
+    error_log("Backend Request: $method Action: $logAction Input: " . substr($rawInput, 0, 100));
+
     if (!$input) {
         http_response_code(400);
         die(json_encode(["error" => "JSON invalide", "raw" => file_get_contents('php://input')]));
@@ -67,6 +76,7 @@ elseif ($method === 'POST') {
 
     switch ($action) {
         case 'vote':
+            if (!$pdo) { http_response_code(503); die(json_encode(["error" => "Indisponible: $dbError"])); }
             if (!isset($input['id']) || !isset($input['type'])) {
                 http_response_code(400);
                 die(json_encode(["error" => "ID ou type manquant"]));
@@ -77,6 +87,7 @@ elseif ($method === 'POST') {
             die(json_encode(["success" => true]));
 
         case 'update_position':
+            if (!$pdo) { http_response_code(503); die(json_encode(["error" => "Indisponible: $dbError"])); }
             if (!isset($input['user_id']) || !isset($input['latitude']) || !isset($input['longitude'])) {
                 http_response_code(400);
                 die(json_encode(["error" => "Données position manquantes"]));
@@ -90,6 +101,7 @@ elseif ($method === 'POST') {
 
         case 'delete':
         case 'delete_alert':
+            if (!$pdo) { http_response_code(503); die(json_encode(["error" => "Indisponible: $dbError"])); }
             if (!isset($input['id'])) {
                 http_response_code(400);
                 die(json_encode(["error" => "ID manquant (reçu: " . json_encode($input) . ")"]));
@@ -103,8 +115,53 @@ elseif ($method === 'POST') {
                 "id" => $input['id']
             ]));
 
+        case 'search_proxy':
+            $query = $input['query'];
+            $url = "https://nominatim.openstreetmap.org/search?q=" . urlencode($query) . "&format=json&limit=10&addressdetails=1";
+            if (isset($input['viewbox'])) {
+                $url .= "&viewbox=" . $input['viewbox'];
+            }
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ['User-Agent: com.alihirlak.gpsfrontiere']);
+            $response = curl_exec($ch);
+            curl_close($ch);
+            die($response);
+
+        case 'reverse_proxy':
+            $lat = $input['lat'];
+            $lon = $input['lon'];
+            $url = "https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon&zoom=10";
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ['User-Agent: com.alihirlak.gpsfrontiere']);
+            $response = curl_exec($ch);
+            curl_close($ch);
+            die($response);
+
+        case 'route_proxy':
+            $valhallaUrl = 'https://valhalla1.openstreetmap.de/route';
+            $ch = curl_init($valhallaUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($input['payload']));
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Content-Type: application/json',
+                'User-Agent: com.alihirlak.gpsfrontiere'
+            ]);
+            $response = curl_exec($ch);
+            if (curl_errno($ch)) {
+                http_response_code(500);
+                die(json_encode(["error" => "Proxy Error: " . curl_error($ch)]));
+            }
+            curl_close($ch);
+            die($response);
+
         case 'create_alert':
         default:
+            if (!$pdo) { 
+                die(json_encode(["success" => false, "message" => "Base de données indisponible"])); 
+            }
             if (!isset($input['type']) || !isset($input['latitude']) || !isset($input['longitude'])) {
                 http_response_code(400);
                 die(json_encode(["error" => "Données signalement manquantes", "received_action" => $action]));

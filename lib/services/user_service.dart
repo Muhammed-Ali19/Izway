@@ -23,7 +23,8 @@ class Peer {
 
 class UserService {
   static const String _userKey = 'user_unique_id';
-  static const String _baseUrl = 'https://muhammed-ali.fr/gps/api.php';
+  // static const String _baseUrl = 'https://muhammed-ali.fr/gps/api.php';
+  static const String _baseUrl = 'http://127.0.0.1:8001/api.php';
   
   String? _userId;
 

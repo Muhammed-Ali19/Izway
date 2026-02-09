@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 
 // Services
@@ -50,6 +52,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
   late AnimationController _markerAnimController;
+  late AnimationController _cameraAnimController;
   
   // State Locations
   Position? _currentPosition;
@@ -102,6 +105,39 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _initAlerts();
     _initUserSync();
     _checkNightMode();
+    _restoreNavigationState(); // Charger le trajet précédent si existe
+  }
+
+  Future<void> _restoreNavigationState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? destJson = prefs.getString('nav_destination');
+    print("DEBUG: _restoreNavigationState, destJson: ${destJson != null ? 'EXISTS' : 'NULL'}");
+    if (destJson != null) {
+      final Map<String, dynamic> data = json.decode(destJson);
+      final dest = LatLng(data['lat'], data['lon']);
+      
+      // Attendre que la position soit disponible (plusieurs tentatives si nécessaire)
+      for (int i = 0; i < 10; i++) {
+        if (_currentPosition != null) break;
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+
+      if (mounted && _currentPosition != null) {
+        _calculateRoutes(dest, autoStart: true);
+      }
+    }
+  }
+
+  Future<void> _saveNavigationState(LatLng? dest) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (dest == null) {
+      await prefs.remove('nav_destination');
+    } else {
+      await prefs.setString('nav_destination', json.encode({
+        'lat': dest.latitude,
+        'lon': dest.longitude,
+      }));
+    }
   }
 
   void _initUserSync() {
@@ -131,6 +167,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _markerAnimController = AnimationController(
       vsync: this, 
       duration: const Duration(milliseconds: 300)
+    );
+    _cameraAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000)
     );
     _markerAnimController.addListener(() {
       if (_animStartPos != null && _animEndPos != null) {
@@ -176,10 +216,24 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       return;
     }
 
-    // Récupérer la position initiale immédiatement
+    // Récupérer la position initiale avec un timeout très court pour ne pas bloquer l'UI
     try {
-      final pos = await _locationService.getCurrentPosition();
-      if (pos != null) _updatePosition(pos);
+      final pos = await _locationService.getCurrentPosition().timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => null, // On laisse le stream prendre le relais après
+      );
+      if (pos != null) {
+        _updatePosition(pos);
+      } else {
+        // Fallback immédiat si trop long
+        print("Location: GPS trop lent, utilisation position par défaut.");
+        _updatePosition(Position(
+          latitude: 46.0746, longitude: 6.5720, // Region Frontière
+          timestamp: DateTime.now(),
+          accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0,
+          altitudeAccuracy: 0, headingAccuracy: 0,
+        ));
+      }
     } catch (e) {
       print("Erreur position initiale: $e");
     }
@@ -231,6 +285,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _markerAnimController.dispose();
+    _cameraAnimController.dispose();
     _alertTimer?.cancel();
     _userSyncTimer?.cancel();
     _searchDebounce?.cancel();
@@ -246,6 +301,23 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       _currentPosition = position;
       _currentHeading = position.heading;
       _currentSpeed = position.speed * 3.6; // m/s to km/h
+      
+      // Mise à jour de la limite de vitesse basée sur la route
+      if (_isNavigationMode && _routes.isNotEmpty) {
+        final route = _routes[_selectedRouteIndex];
+        final idx = _locationService.findClosestPointIndex(newPos, route.points);
+        if (idx != -1 && route.speedLimits != null && idx < route.speedLimits!.length) {
+          final speedLimitMs = route.speedLimits![idx]; // OSRM renvoie souvent en m/s ou km/h selon version
+          // NOTE: Sur router.project-osrm.org, c'est souvent la vitesse "théorique" en m/s ou index.
+          // Pour cet exercice, on va assumer que c'est une valeur exploitable ou on garde le fallback.
+          if (speedLimitMs > 0) {
+            _currentLimit = (speedLimitMs * 3.6).round(); // Conversion si m/s
+            // Ajustement si OSRM renvoie des valeurs bizarres (ex: 130 km/h)
+            if (_currentLimit > 200) _currentLimit = (speedLimitMs).round(); 
+          }
+        }
+      }
+      
       _isSpeeding = _currentSpeed > (_currentLimit + 5); // Tolérance de 5km/h
       
       if (_currentDisplayPosition == null) {
@@ -386,8 +458,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
 
     if (minDist > 50) {
-      print("Hors route (${minDist.round()}m) - Recalcul...");
-      _calculateRoutes(_destination!);
+      print("Hors route (${minDist.round()}m) - Recalcul automatique...");
+      _calculateRoutes(_destination!, autoResume: true);
     }
   }
 
@@ -403,6 +475,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _search(String query) async {
+    print("DEBUG: _search called with: $query");
     setState(() => _isSearching = true);
     final results = await _searchService.searchPlaces(query, _currentDisplayPosition);
     if (mounted) {
@@ -413,27 +486,31 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _calculateRoutes(LatLng dest) async {
-    print("DEBUG: _calculateRoutes appelé. Dest: ${dest.latitude}, ${dest.longitude}");
+  Future<void> _calculateRoutes(LatLng dest, {bool autoResume = false, bool autoStart = false}) async {
+    print("DEBUG: _calculateRoutes appelé. Dest: ${dest.latitude}, ${dest.longitude}, autoResume: $autoResume");
     if (_currentPosition == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("ERREUR: Position actuelle nulle!")),
-      );
+      if (!autoResume) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("ERREUR: Position actuelle nulle!")),
+        );
+      }
       return;
     }
     
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Calcul de l'itinéraire en cours..."), duration: Duration(seconds: 1)),
-    );
+    if (!autoResume && !autoStart) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Calcul de l'itinéraire en cours..."), duration: Duration(seconds: 1)),
+      );
+    }
     
     setState(() {
       _isRouting = true;
       _destination = dest;
       _routes = [];
       _selectedRouteIndex = 0; 
-      _isFollowingUser = false; // Stop jumping to user during overview
+      if (!autoResume) _isFollowingUser = false; 
       _searchResults = []; 
-      _isNavigationMode = false;
+      if (!autoResume && !autoStart) _isNavigationMode = false;
     });
 
     final start = LatLng(_currentPosition!.latitude, _currentPosition!.longitude);
@@ -441,9 +518,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
       if (routes.isEmpty) {
         setState(() => _isRouting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Aucun itinéraire trouvé vers cette destination.")),
-        );
+        if (!autoResume) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Aucun itinéraire trouvé vers cette destination.")),
+          );
+        }
         return;
       }
 
@@ -451,13 +530,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _routes = routes;
         _isRouting = false;
         
+        print("MAP: Route set! ${routes.length} routes. First route has ${routes.first.points.length} points.");
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("${routes.length} itinéraires trouvés !")),
         );
 
-        // Zoom pour voir toute la route
+        // Zoom pour voir toute la route (seulement si pas auto)
         final points = routes.first.points;
-        if (points.isNotEmpty) {
+        if (points.isNotEmpty && !autoResume && !autoStart) {
           final bounds = LatLngBounds.fromPoints(points);
           _mapController.fitCamera(
             CameraFit.bounds(
@@ -465,6 +546,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               padding: const EdgeInsets.all(80.0),
             ),
           );
+        }
+
+        if (autoResume || autoStart) {
+          _isNavigationMode = true;
+          _isFollowingUser = true;
         }
 
         // 3. Calculer les pays traversés (Async)
@@ -501,10 +587,74 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   void _startNavigation() {
+    if (_currentPosition == null) return;
+
+    final LatLng startPos = _mapController.camera.center;
+    final double startZoom = _mapController.camera.zoom;
+    final double startRotation = _mapController.camera.rotation;
+
+    final LatLng endPos = LatLng(_currentPosition!.latitude, _currentPosition!.longitude);
+    final double endZoom = 17.5;
+    final double endRotation = -_currentHeading;
+
+    // S'assurer qu'il y a un mouvement visible
+    // Si déjà trop proche en zoom, on dézoom un peu d'abord pour l'effet "plongée"
+    double startZoomAdj = startZoom;
+    if ((startZoom - endZoom).abs() < 1) {
+       startZoomAdj = endZoom - 4; // Dézoom forcé de 4 niveaux
+    }
+
+    _cameraAnimController.stop();
+    _cameraAnimController.reset();
+
+    final Animation<double> curve = CurvedAnimation(
+      parent: _cameraAnimController,
+      curve: Curves.fastOutSlowIn,
+    );
+
+    VoidCallback? listener;
+    listener = () {
+      if (!mounted) {
+        _cameraAnimController.removeListener(listener!);
+        return;
+      }
+      final double t = curve.value;
+      
+      // Interpolate Position
+      final double lat = startPos.latitude + (endPos.latitude - startPos.latitude) * t;
+      final double lng = startPos.longitude + (endPos.longitude - startPos.longitude) * t;
+      
+      // Interpolate Zoom (utiliser le zoom ajusté pour garantir l'effet)
+      final double zoom = startZoomAdj + (endZoom - startZoomAdj) * t;
+      
+      // Interpolate Rotation
+      double diff = endRotation - startRotation;
+      while (diff > 180) diff -= 360;
+      while (diff < -180) diff += 360;
+      final double rotation = startRotation + diff * t;
+
+      _mapController.move(LatLng(lat, lng), zoom);
+      _mapController.rotate(rotation);
+
+      if (t == 1.0) {
+        _cameraAnimController.removeListener(listener!);
+      }
+    };
+
+    _cameraAnimController.addListener(listener);
+
     setState(() {
       _isNavigationMode = true;
-      _isFollowingUser = true;
+      _isFollowingUser = false; // Désactiver pendant l'animation pour éviter les conflits
     });
+
+    _cameraAnimController.forward().then((_) {
+      if (mounted) {
+        setState(() => _isFollowingUser = true); // Réactiver une fois fini
+      }
+    });
+
+    _saveNavigationState(_destination);
   }
 
   void _stopNavigation() {
@@ -514,6 +664,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       _destination = null;
       _mapController.rotate(0);
     });
+    _saveNavigationState(null);
   }
 
   void _onAlertReported(AlertType type) {
@@ -570,6 +721,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    if (_routes.isNotEmpty) {
+       print("BUILD: Rendering ${_routes.length} routes. First route has ${_routes.first.points.length} points.");
+    }
     // Calcul ETA pour Dashboard
     String duration = "", distance = "", eta = "";
     if (_routes.isNotEmpty) {
@@ -627,9 +781,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       return Polyline(
                         points: route.points,
                         strokeWidth: isSelected ? 8.0 : 4.0,
-                        color: isSelected ? const Color(0xFF2196F3) : Colors.blueGrey.withOpacity(0.4),
-                        borderColor: isSelected ? const Color(0xFF0D47A1) : Colors.black26,
-                        borderStrokeWidth: isSelected ? 2.0 : 0.0,
+                        color: isSelected ? const Color(0xFF2196F3) : Colors.blueGrey,
                       );
                     }),
                 ],
@@ -638,7 +790,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               // Markers (Destination + Alerts + User)
               MarkerLayer(
                 markers: [
-                  // Destination
                   if (_destination != null)
                     Marker(
                       point: _destination!,
@@ -709,7 +860,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                           _isNavigationMode ? Icons.navigation : Icons.circle,
                           color: Colors.blueAccent,
                           size: 40,
-                          shadows: [Shadow(blurRadius: 10, color: Colors.blueAccent.withOpacity(0.5))],
+                          shadows: [],
                         ),
                       ),
                     ),
@@ -738,11 +889,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             SearchResults(
               results: _searchResults,
               onResultSelected: (res) {
+                 print("DEBUG: Result selected: ${res.displayName} (${res.lat}, ${res.lon})");
                  FocusScope.of(context).unfocus();
                  _calculateRoutes(LatLng(res.lat, res.lon));
               },
             ),
 
+          /*
           // Navigation Instruction (si en nav)
           if (_isNavigationMode && 
               _routes.isNotEmpty && 
@@ -765,6 +918,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                  nextBorderFlag: _nextBorderFlag,
                ),
              ),
+          */
 
           // Radar Zone Warning
           if (_isInRadarZone)
@@ -920,6 +1074,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 child: CircularProgressIndicator(color: Colors.blueAccent),
               ),
             ),
+
+          // DEBUG BUTTON
+          Positioned(
+            top: 250,
+            right: 16,
+            child: FloatingActionButton(
+              heroTag: 'debug_lyon',
+              onPressed: () => _calculateRoutes(const LatLng(45.7640, 4.8357)),
+              backgroundColor: Colors.red,
+              child: const Text("LYON"),
+            ),
+          ),
         ],
       ),
     );

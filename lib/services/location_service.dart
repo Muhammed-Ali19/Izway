@@ -33,8 +33,8 @@ class LocationService {
       print("Location: Tentative de récupération position...");
       return await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.bestForNavigation,
-        timeLimit: const Duration(seconds: 4),
-      ).timeout(const Duration(seconds: 5));
+        timeLimit: const Duration(seconds: 15),
+      ).timeout(const Duration(seconds: 16));
     } catch (e) {
       print("Location: ERREUR ou TIMEOUT ($e). Utilisation du FALLBACK Paris.");
       // Fallback Position
@@ -71,8 +71,8 @@ class LocationService {
   // routePoints: liste complète des points du tracé
   double distanceAlongRoute(LatLng userPos, LatLng targetPos, List<LatLng> routePoints) {
     // 1. Trouver l'index du point le plus proche de l'utilisateur
-    int startIndex = _findClosestPointIndex(userPos, routePoints);
-    int endIndex = _findClosestPointIndex(targetPos, routePoints);
+    int startIndex = findClosestPointIndex(userPos, routePoints);
+    int endIndex = findClosestPointIndex(targetPos, routePoints);
     
     if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
        // Fallback vol d'oiseau si échec ou si cible derrière nous
@@ -95,7 +95,7 @@ class LocationService {
     return totalDist;
   }
 
-  int _findClosestPointIndex(LatLng pos, List<LatLng> points) {
+  int findClosestPointIndex(LatLng pos, List<LatLng> points) {
     double minD = double.infinity;
     int idx = -1;
     

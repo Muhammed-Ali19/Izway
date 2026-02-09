@@ -10,7 +10,8 @@ class AlertService {
   static const String _hiddenAlertsKey = 'hidden_alerts';
   
   // Production URL
-  static const String _baseUrl = 'https://muhammed-ali.fr/gpsfrontiere/api.php'; 
+  // static const String _baseUrl = 'https://muhammed-ali.fr/gpsfrontiere/api.php'; 
+  static const String _baseUrl = 'http://127.0.0.1:8001/api.php';
   
   final List<Alert> _alerts = [];
   final Set<String> _votedIds = {};

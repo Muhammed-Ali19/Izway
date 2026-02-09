@@ -5,69 +5,60 @@ import '../models/route_models.dart';
 
 class RouteService {
   final http.Client _client = http.Client();
+  static const String _proxyUrl = 'http://127.0.0.1:8001/api.php';
 
   // Calculer plusieurs routes avec alternatives
   Future<List<RouteInfo>> calculateRoutes(LatLng start, LatLng destination) async {
+    print("DEBUG: calculateRoutes START (from ${start.latitude},${start.longitude} to ${destination.latitude},${destination.longitude})");
     List<RouteInfo> allRoutes = [];
     
     try {
-      // On lance les 3 types de recherche en parallèle
-      // On utilise une petite fonction helper pour ne pas tout bloquer si une requête échoue
-      Future<List<RouteInfo>> safeAutoroute() async {
-        try {
-          return await _fetchOSRMRoutes(start, destination, labelPrefix: "Autoroute");
-        } catch (e) {
-          print("Erreur Autoroute: $e");
-          return [];
+      // 1. Chercher le trajet "Autoroute"
+      final autoroutes = await _safeFetchValhallaRoutes(start, destination, labelPrefix: "Autoroute", profile: "auto");
+      if (autoroutes.isNotEmpty) {
+        allRoutes.add(autoroutes.first);
+      }
+      
+      // 2. Chercher le trajet "Nationale" (en réduisant le poids des autoroutes)
+      final nationales = await _safeFetchValhallaRoutes(start, destination, labelPrefix: "Nationale", profile: "auto", avoidHighways: true);
+      if (nationales.isNotEmpty) {
+        if (_isDifferentRoute(nationales.first, allRoutes)) {
+          allRoutes.add(nationales.first);
         }
       }
 
-      final results = await Future.wait([
-        safeAutoroute(),
-        _safeFetchOSRMRoutes(start, destination, labelPrefix: "Sans Péage", alternatives: false),
-        _safeFetchOSRMRoutes(start, destination, labelPrefix: "Nationale", alternatives: false),
-      ]);
-
-      // Fusionner les résultats en évitant les doublons
-      // 1. Autoroutes
-      allRoutes.addAll(results[0]);
-      
-      // 2. Sans péage
-      for (var route in results[1]) {
-        if (_isDifferentRoute(route, allRoutes)) {
-          allRoutes.add(route);
+      // 3. Optionnel: Sans Péage
+      final sansPeage = await _safeFetchValhallaRoutes(start, destination, labelPrefix: "Sans Péage", profile: "auto", avoidTolls: true);
+      if (sansPeage.isNotEmpty) {
+        if (_isDifferentRoute(sansPeage.first, allRoutes)) {
+          allRoutes.add(sansPeage.first);
         }
       }
-      
-      // 3. Nationales
-      for (var route in results[2]) {
-        if (_isDifferentRoute(route, allRoutes)) {
-          allRoutes.add(route);
-        }
-      }
-
-      // Si vraiment rien n'a été trouvé
-      if (allRoutes.isEmpty) {
-        print("Aucun itinéraire trouvé.");
-      }
-      
     } catch (e) {
-      print("Erreur critique calcul routes: $e");
+      print("Erreur critique calcul routes Valhalla: $e");
     }
     
     return allRoutes;
   }
-  // Wrapper safe pour éviter de bloquer tout le processus
-  Future<List<RouteInfo>> _safeFetchOSRMRoutes(
+  // Wrapper safe pour Valhalla
+  Future<List<RouteInfo>> _safeFetchValhallaRoutes(
     LatLng start, 
     LatLng dest, {
     String labelPrefix = "",
-    bool alternatives = true,
+    String profile = "auto",
+    bool avoidHighways = false,
+    bool avoidTolls = false,
   }) async {
     try {
-      return await _fetchOSRMRoutes(start, dest, labelPrefix: labelPrefix, alternatives: alternatives);
+      return await _fetchValhallaRoutes(
+        start, dest, 
+        labelPrefix: labelPrefix, 
+        profile: profile,
+        avoidHighways: avoidHighways,
+        avoidTolls: avoidTolls,
+      );
     } catch (e) {
-      print("Erreur OSRM ($labelPrefix): $e");
+      print("Erreur Valhalla ($labelPrefix): $e");
       return [];
     }
   }
@@ -83,127 +74,216 @@ class RouteService {
     return true;
   }
 
-  // Fetch routes depuis OSRM
-  Future<List<RouteInfo>> _fetchOSRMRoutes(
+  // Fetch routes depuis Valhalla API
+  Future<List<RouteInfo>> _fetchValhallaRoutes(
     LatLng start, 
     LatLng dest, {
     String labelPrefix = "",
-    bool alternatives = true,
+    String profile = "auto",
+    bool avoidHighways = false,
+    bool avoidTolls = false,
   }) async {
     final stopWatch = Stopwatch()..start();
-    // NOTE: On retire 'excludeType' car le serveur public OSRM retourne souvent 400 si on l'utilise.
-    String urlString = 'https://router.project-osrm.org/route/v1/driving/${start.longitude},${start.latitude};${dest.longitude},${dest.latitude}?overview=full&geometries=geojson&steps=true&alternatives=$alternatives';
     
-    print("OSRM URL ($labelPrefix): $urlString");
+    final Map<String, dynamic> jsonPayload = {
+      "locations": [
+        {"lat": start.latitude, "lon": start.longitude},
+        {"lat": dest.latitude, "lon": dest.longitude}
+      ],
+      "costing": profile,
+      "costing_options": {
+        profile: {
+          if (avoidHighways) "use_highways": 0.0,
+          if (avoidTolls) "use_tolls": 0.0,
+        }
+      },
+      "shape_format": "polyline6",
+      "units": "kilometers",
+      "format": "json",
+      "id": labelPrefix
+    };
 
-    final response = await _client.get(
-      Uri.parse(urlString), 
-      headers: {'User-Agent': 'com.alihirlak.gpsfrontiere'}
-    ).timeout(const Duration(seconds: 8));
+    final String urlString = _proxyUrl;
     
-    stopWatch.stop();
-    print("OSRM DONE ($labelPrefix): ${stopWatch.elapsedMilliseconds}ms");
+    print("Valhalla Proxy Request ($labelPrefix) -> $urlString");
 
-    if (response.statusCode != 200) {
-      throw Exception("Erreur OSRM (${response.statusCode})");
-    }
+    final response = await _client.post(
+      Uri.parse(urlString),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: json.encode({
+        'action': 'route_proxy',
+        'payload': jsonPayload
+      }),
+    ).timeout(const Duration(seconds: 15));
+    
+    print("Valhalla Status: ${response.statusCode}");
+    print("Valhalla Headers: ${response.headers}");
+    print("Valhalla Response Body Snippet: ${response.body.length > 300 ? response.body.substring(0, 300) : response.body}");
 
     final data = json.decode(response.body);
-    if (data['routes'] == null || (data['routes'] as List).isEmpty) {
+    if (data['trip'] == null || data['trip']['legs'] == null) {
+      print("Valhalla Error: No trip or legs in response");
       return [];
     }
 
-    List<RouteInfo> routes = [];
-    int routeIndex = 1;
+    final trip = data['trip'];
+    final legs = trip['legs'] as List;
     
-    for (var routeData in data['routes']) {
-      final geometry = routeData['geometry']['coordinates'] as List;
-      final double duration = (routeData['duration'] as num).toDouble();
-      final double distance = (routeData['distance'] as num).toDouble();
+    List<LatLng> allPoints = [];
+    List<RouteStep> allSteps = [];
+    List<int> allSpeedLimits = [];
 
-      List<LatLng> points = geometry.map((coord) {
-        return LatLng(coord[1].toDouble(), coord[0].toDouble());
-      }).toList();
-
-      // Parsing Steps
-      List<RouteStep> steps = [];
-      if (routeData['legs'] != null && routeData['legs'].isNotEmpty) {
-        final legs = routeData['legs'][0];
-        if (legs['steps'] != null) {
-          for (var step in legs['steps']) {
-            final maneuver = step['maneuver'] ?? {};
-            final location = maneuver['location'] ?? [0, 0];
-            
-            // OSRM peut fournir une instruction complète
-            String instr = maneuver['instruction'] ?? "";
-            
-            // Si l'instruction est vide, on la construit manuellement
-            if (instr.isEmpty) {
-               final String type = maneuver['type'] ?? "drive";
-               final String mod = maneuver['modifier'] ?? "";
-               final String name = step['name'] ?? "";
-               instr = "$type $mod ${name.isNotEmpty ? 'sur $name' : ''}";
-            }
-
-            steps.add(RouteStep(
-              instruction: instr, 
-              name: step['name'] ?? "",
-              distance: (step['distance'] as num).toDouble(),
-              duration: (step['duration'] as num).toDouble(),
-              maneuverType: maneuver['type'] ?? "move",
-              maneuverModifier: maneuver['modifier'] ?? "",
-              location: LatLng(location[1].toDouble(), location[0].toDouble())
-            ));
-          }
-        }
-      }
-
-      // Speed Limits
-      List<int>? speeds;
-      if (routeData['legs'] != null && routeData['legs'].isNotEmpty) {
-        final annotation = routeData['legs'][0]['annotation'];
-        if (annotation != null && annotation['speed'] != null) {
-          speeds = [];
-          for (var s in (annotation['speed'] as List)) {
-            speeds.add(s == null ? 0 : (s is num ? s.round() : 0));
-          }
-        }
-      }
-
-      // Générer label
-      String label;
-      if (routeIndex == 1) {
-        label = labelPrefix;
-      } else {
-        final firstRoute = routes.first;
-        final timeDiff = duration - firstRoute.duration;
-        final distDiff = distance - firstRoute.distance;
-        
-        if (timeDiff < 60) {
-          label = "$labelPrefix $routeIndex";
-        } else if (distDiff < 0) {
-          label = "$labelPrefix $routeIndex (plus courte)";
-        } else {
-          label = "$labelPrefix $routeIndex (+${(timeDiff / 60).round()} min)";
-        }
-      }
-
-      routes.add(RouteInfo(
-        points: points,
-        duration: duration,
-        distance: distance,
-        label: label,
-        countries: ["Chargement..."], 
-        hasEUExit: false, 
-        distanceToBorder: null,
-        speedLimits: speeds,
-        steps: steps,
-      ));
+    for (int i = 0; i < legs.length; i++) {
+      final leg = legs[i];
+      final String? shape = leg['shape'];
+      print("DEBUG: Parsing Leg $i, shape is ${shape != null ? 'len=${shape.length}' : 'NULL'}");
+      if (shape == null || shape.isEmpty) continue;
       
-      routeIndex++;
+      print("Shape snippet: ${shape.length > 100 ? shape.substring(0, 100) : shape}");
+
+      // Décodage de la polyline avec indice de position pour auto-détection précision
+      final List<LatLng> decodedPoints = _decodePolyline(shape, hint: start);
+      allPoints.addAll(decodedPoints);
+
+      // Parsing Maneuvers (Steps)
+      if (leg['maneuvers'] != null) {
+        for (var maneuver in leg['maneuvers']) {
+          final int startIdx = maneuver['begin_shape_index'] ?? 0;
+          final String instr = maneuver['instruction'] ?? "";
+          
+          allSteps.add(RouteStep(
+            instruction: instr,
+            name: maneuver['street_names'] != null ? (maneuver['street_names'] as List).join(", ") : "",
+            distance: (maneuver['length'] as num).toDouble() * 1000, 
+            duration: (maneuver['time'] as num).toDouble(),
+            maneuverType: maneuver['type']?.toString() ?? "move",
+            maneuverModifier: "", 
+            location: decodedPoints[startIdx < decodedPoints.length ? startIdx : 0],
+          ));
+        }
+      }
     }
 
-    return routes;
+    // Extraction des limites de vitesse depuis les manoeuvres
+    allSpeedLimits = List.filled(allPoints.length, 0);
+    for (var leg in legs) {
+      if (leg['maneuvers'] != null) {
+        for (var maneuver in leg['maneuvers']) {
+          final int startIdx = maneuver['begin_shape_index'] ?? 0;
+          final int? limit = maneuver['speed_limit'] != null ? (maneuver['speed_limit'] as num).round() : null;
+          if (limit != null && limit > 0) {
+            for (int i = startIdx; i < allPoints.length; i++) {
+              allSpeedLimits[i] = limit;
+            }
+          }
+        }
+      }
+    }
+
+    print("Valhalla Result ($labelPrefix): ${allPoints.length} points");
+    if (allPoints.isNotEmpty) {
+      print("First point: ${allPoints.first}");
+      print("Last point: ${allPoints.last}");
+    } else {
+      print("ATTENTION: Aucun point valide après décodage !");
+    }
+
+    return [
+      RouteInfo(
+        points: allPoints,
+        duration: (trip['summary']['time'] as num).toDouble(),
+        distance: (trip['summary']['length'] as num).toDouble() * 1000,
+        label: labelPrefix,
+        speedLimits: allSpeedLimits,
+        steps: allSteps,
+      )
+    ];
+  }
+
+  // Décodeur Polyline avec détection de précision auto (1e5 ou 1e6)
+  List<LatLng> _decodePolyline(dynamic encoded, {required LatLng? hint}) {
+    if (encoded == null) return [];
+    
+    // Si déjà une liste (Valhalla peut parfois retourner les points en clair)
+    if (encoded is List) {
+      return encoded.map<LatLng>((p) {
+        if (p is List && p.length >= 2) {
+          return LatLng(p[0].toDouble(), p[1].toDouble());
+        } else if (p is Map && p.containsKey('lat') && p.containsKey('lon')) {
+          return LatLng(p['lat'].toDouble(), p['lon'].toDouble());
+        }
+        return const LatLng(0, 0);
+      }).where((p) => p.latitude != 0).toList();
+    }
+
+    if (encoded is! String) return [];
+
+    // On essaie d'abord 1e6 (Valhalla default)
+    List<LatLng> points = _decodeWithPrecision(encoded, 1e6);
+    
+    // Si on a un point de référence (hint) et que le premier point est trop loin,
+    // ou si on n'a aucun point valide, on tente 1e5.
+    if (hint != null && points.isNotEmpty) {
+      final d = _calculateSimpleDist(hint, points.first);
+      if (d > 5.0) { // Si > 5 degrés de différence, probabilité de précision 1e5
+        print("Valhalla Polyline: Précision 1e6 semble incorrecte (dist: $d). Essai 1e5...");
+        points = _decodeWithPrecision(encoded, 1e5);
+      }
+    } else if (points.isEmpty) {
+      points = _decodeWithPrecision(encoded, 1e5);
+    }
+    
+    return points;
+  }
+
+  List<LatLng> _decodeWithPrecision(String encoded, double precision) {
+    List<LatLng> points = [];
+    int index = 0;
+    int len = encoded.length;
+    int lat = 0;
+    int lng = 0;
+
+    while (index < len) {
+      int b;
+      int shift = 0;
+      int result = 0;
+      do {
+        if (index >= len) break;
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 31) << shift;
+        shift += 5;
+      } while (b >= 32);
+      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1)).toSigned(32);
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        if (index >= len) break;
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 31) << shift;
+        shift += 5;
+      } while (b >= 32);
+      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1)).toSigned(32);
+      lng += dlng;
+
+      final double pLat = lat / precision;
+      final double pLng = lng / precision;
+      
+      if (pLat >= -90.0 && pLat <= 90.0 && pLng >= -180.0 && pLng <= 180.0) {
+        points.add(LatLng(pLat, pLng));
+      } else {
+        // Stop on drift
+        break;
+      }
+    }
+    return points;
+  }
+
+  double _calculateSimpleDist(LatLng p1, LatLng p2) {
+    return (p1.latitude - p2.latitude).abs() + (p1.longitude - p2.longitude).abs();
   }
 
   // Enrichir les routes avec les pays (à appeler après)

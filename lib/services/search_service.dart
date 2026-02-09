@@ -4,6 +4,8 @@ import 'package:latlong2/latlong.dart';
 import '../models/route_models.dart';
 
 class SearchService {
+  static const String _baseUrl = 'http://127.0.0.1:8001/api.php';
+
   // Rechercher des lieux via Nominatim
   Future<List<SearchResult>> searchPlaces(String query, LatLng? currentPosition) async {
     if (query.isEmpty) {
@@ -13,35 +15,48 @@ class SearchService {
     // Construire l'URL avec viewbox pour prioriser les résultats proches
     // URL optimisée pour plus de précision et rapidité
     // dedupe=1 évite les doublons, limit=20 pour plus de choix
-    String urlString = 'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&limit=20&addressdetails=1&dedupe=1';
-    
+    String viewBoxStr = "";
     if (currentPosition != null) {
       final lat = currentPosition.latitude;
       final lon = currentPosition.longitude;
-      // Viewbox un peu plus serré pour la priorité locale mais sans blocage
-      final latDelta = 1.0; 
-      final lonDelta = 1.0;
-      urlString += '&viewbox=${lon - lonDelta},${lat + latDelta},${lon + lonDelta},${lat - latDelta}';
-      urlString += '&bounded=0';
+      viewBoxStr = '${lon - 2.0},${lat + 2.0},${lon + 2.0},${lat - 2.0}';
     }
     
-    final url = Uri.parse(urlString);
+    final url = Uri.parse(_baseUrl);
     try {
-      final response = await http.get(
+      final response = await http.post(
         url, 
         headers: {
-          'User-Agent': 'com.alihirlak.gpsfrontiere',
-          'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
-        }
-      );
+          'Content-Type': 'application/json',
+        },
+        body: json.encode({
+          'action': 'search_proxy',
+          'query': query,
+          if (viewBoxStr.isNotEmpty) 'viewbox': viewBoxStr
+        })
+      ).timeout(const Duration(seconds: 5));
       
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
         return data.map((item) {
-          // Si c'est une adresse précise, on essaie de garder un nom lisible 
-          // mais Nominatim display_name est déjà complet.
+          final addr = item['address'] ?? {};
+          String name = item['display_name'] ?? 'Inconnu';
+          
+          // Construction plus précise de l'adresse pour l'UI
+          if (addr['road'] != null) {
+            final house = addr['house_number'] ?? '';
+            final road = addr['road'];
+            final city = addr['city'] ?? addr['town'] ?? addr['village'] ?? addr['suburb'] ?? '';
+            
+            if (house.isNotEmpty) {
+              name = "$house $road, $city";
+            } else {
+              name = "$road, $city";
+            }
+          }
+
           return SearchResult(
-            item['display_name'] ?? 'Inconnu',
+            name.trim(),
             double.parse(item['lat']),
             double.parse(item['lon']),
           );
@@ -57,12 +72,15 @@ class SearchService {
   // Obtenir le code pays d'une position
   Future<String> getCountryCode(LatLng position) async {
     try {
-      final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/reverse?format=json&lat=${position.latitude}&lon=${position.longitude}&zoom=3'
-      );
-      final response = await http.get(
+      final url = Uri.parse(_baseUrl);
+      final response = await http.post(
         url, 
-        headers: {'User-Agent': 'com.alihirlak.gpsfrontiere'}
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'action': 'reverse_proxy',
+          'lat': position.latitude,
+          'lon': position.longitude
+        })
       );
       
       if (response.statusCode == 200) {
