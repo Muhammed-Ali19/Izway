@@ -1,10 +1,9 @@
-# gps_frontiere
+# IzWay
 
-A new Flutter project.
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
+Un projet Flutter pour aider les voyageurs à trouver les meilleures routes pour leurs voyages.
 
 A few resources to get you started if this is your first Flutter project:
 

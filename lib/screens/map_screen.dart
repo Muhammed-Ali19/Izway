@@ -17,6 +17,7 @@ import '../services/alert_service.dart';
 import '../services/traffic_service.dart';
 import '../services/country_service.dart';
 import '../services/user_service.dart';
+import '../services/speed_limit_service.dart';
 
 // Models
 import '../models/route_models.dart';
@@ -49,6 +50,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final TrafficService _trafficService = TrafficService();
   final CountryService _countryService = CountryService();
   final UserService _userService = UserService();
+  final SpeedLimitService _speedLimitService = SpeedLimitService();
+
+  // CONFIGURATION
+  // TODO: Remplacez par votre clé MapTiler créée sur https://cloud.maptiler.com
+  static const String _mapTilerKey = 'zgoFNbOCQrj0s7xinkOT'; 
 
   // Controllers
   final MapController _mapController = MapController();
@@ -107,7 +113,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     print("--------------------------------------------------");
-    print("GPS FRONTIERE - VERSION 3.1 - UI MISE À JOUR");
+    print("GPS FRONTIERE - VERSION 3.3 - UI MISE À JOUR");
     print("--------------------------------------------------");
     _initAnimation();
     _initLocation();
@@ -357,43 +363,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       _currentHeading = targetHeading;
       _currentSpeed = position.speed * 3.6; // m/s to km/h
       
-      // Mise à jour de la limite de vitesse basée sur la route
-      if (_isNavigationMode && _routes.isNotEmpty) {
-        final route = _routes[_selectedRouteIndex];
-        final idx = _locationService.findClosestPointIndex(newPos, route.points);
-        if (idx != -1 && route.speedLimits != null && idx < route.speedLimits!.length) {
-          final speedLimitKmh = route.speedLimits![idx];
-          
-          if (speedLimitKmh > 0) {
-            // Valid data found
-            _currentLimit = speedLimitKmh;
-            _lastKnownLimit = speedLimitKmh;
-            _lastValidLimitDistance = 0;
-          } else {
-            // Missing data (0) -> Use sticky logic
-            // Calculate distance since last update (approx based on speed * time? 
-            // Better: add distance to accumulator if we had previous position)
-            // For now, we increment loosely or just allow "persistence" for N position updates?
-            // Let's use distance logic if possible, but simplest is just:
-            // "Keep _lastKnownLimit until we have traveled X meters without update"
-            
-            // To do this simply without tracking precise distance delta here:
-            // Just keep _lastKnownLimit. 
-            // Only if it persists for VERY long (e.g. huge gap), maybe revert.
-            // But for highways, "holes" are usually short.
-            
-            // Let's implement a simple decay-based reset if needed, but "Unlimited Sticky" 
-            // until next valid sign is actually how real cars work (until a generic "End of zone" or intersection).
-            // Valhalla 0 means "unknown".
-            
-            _currentLimit = _lastKnownLimit;
-            
-            // Auto-fallback after huge distance?
-            // Let's rely on valid data coming back eventually.
-            // Only fallback if we strictly have NO initial data yet, which remains 50.
-          }
-        }
-      }
+      // Mise à jour de la limite de vitesse (Route + Overpass)
+      _updateSpeedLimit(newPos);
       
       _isSpeeding = _currentSpeed > (_currentLimit + 5); // Tolérance de 5km/h
       
@@ -443,6 +414,41 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
     // Check if in radar zone for visual warning
     _checkRadarZone(newPos);
+  }
+
+  Future<void> _updateSpeedLimit(LatLng pos) async {
+    // 1. D'abord vérifier les données de l'itinéraire (Rapide & Hors ligne)
+    int? routeLimit;
+    if (_isNavigationMode && _routes.isNotEmpty) {
+      final route = _routes[_selectedRouteIndex];
+      final idx = _locationService.findClosestPointIndex(pos, route.points);
+      if (idx != -1 && route.speedLimits != null && idx < route.speedLimits!.length) {
+        final val = route.speedLimits![idx];
+        if (val > 0) routeLimit = val;
+      }
+    }
+
+    if (routeLimit != null) {
+      if (mounted && _currentLimit != routeLimit) {
+        setState(() {
+          _currentLimit = routeLimit!;
+          _lastKnownLimit = routeLimit!;
+        });
+      }
+      return;
+    }
+
+    // 2. Si pas de données itinéraire, vérifier Overpass (lent mais fiable)
+    final int? liveLimit = await _speedLimitService.fetchSpeedLimit(pos);
+    
+    if (mounted && liveLimit != null) {
+      setState(() {
+         if (_currentLimit != liveLimit) {
+            _currentLimit = liveLimit;
+            _lastKnownLimit = liveLimit;
+         }
+      });
+    }
   }
 
   void _checkStepProgression(LatLng userPos) {
@@ -915,7 +921,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 maxNativeZoom: 19,
                 maxZoom: 19,
               ),
-              
+
+              // TRAFFIC LAYER (MapTiler)
+              // Requires API KEY: https://cloud.maptiler.com/account/keys
               // Polylines
               PolylineLayer(
                 polylines: <Polyline>[
@@ -935,6 +943,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       );
                     }),
                 ],
+              ),
+
+              // TRAFFIC LAYER (Google Overlay - Reliable Fallback)
+              // Moved AFTER PolylineLayer so traffic colors appear ON TOP of the blue route line.
+              Opacity(
+                opacity: 0.6,
+                child: TileLayer(
+                  urlTemplate: 'https://mt1.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}',
+                  userAgentPackageName: 'com.alihirlak.gpsfrontiere',
+                  maxNativeZoom: 19,
+                  maxZoom: 19,
+                ),
               ),
                 
               // Markers (Destination + Alerts + User)
@@ -1027,12 +1047,45 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       width: 60,
                       height: 60,
                       child: Transform.rotate(
-                        angle: _isNavigationMode ? 0 : (_currentHeading * (pi / 180)),
-                        child: Icon(
-                          _isNavigationMode ? Icons.navigation : Icons.circle,
-                          color: Colors.blueAccent,
-                          size: 40,
-                          shadows: [],
+                        // Fixed: Always rotate the marker to match the vehicle's heading relative to North.
+                        // Even if the Map rotates (Course-Up), the marker needs to be rotated *on the map* 
+                        // to point in the correct direction (which will end up being "Up" on screen).
+                        angle: _currentHeading * (pi / 180),
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            // White Background (Border)
+                            Container(
+                              width: 50,
+                              height: 50,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.3),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  )
+                                ],
+                              ),
+                            ),
+                            // Blue Fill
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: const BoxDecoration(
+                                color: Colors.blueAccent,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            // White Arrow
+                            const Icon(
+                              Icons.navigation_rounded, 
+                              color: Colors.white, 
+                              size: 28,
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -1324,7 +1377,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             bottom: 8,
             left: 8,
             child: Text(
-              "VERSION 3.1 - DEBUG MODE",
+              "VERSION 3.4 - DEBUG MODE",
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.2),
                 fontSize: 9,

@@ -263,9 +263,20 @@ class RouteService {
       List<int> legLimits = List.filled(decodedPoints.length, 0);
       if (leg['annotation'] != null && leg['annotation']['maxspeed'] != null) {
          final List<dynamic> speeds = leg['annotation']['maxspeed'];
+         if (kDebugMode) {
+            print("DEBUG: Leg $i - Points: ${decodedPoints.length}, Speeds: ${speeds.length}");
+            // print("DEBUG: Speeds sample: ${speeds.take(10).toList()}");
+         }
+         
+         // Valhalla maxspeed is per-edge (segment between two points).
+         // Point N has speed from Edge N-1? Or Edge N?
+         // Usually: annotations are for the edge ending at this point, or starting?
+         // Let's assume 1:1 for now but safety check.
          for (int j = 0; j < speeds.length && j < decodedPoints.length; j++) {
            legLimits[j] = (speeds[j] as num).toInt();
          }
+      } else {
+         if (kDebugMode) print("DEBUG: Leg $i - NO maxspeed annotation found.");
       }
       allSpeedLimits.addAll(legLimits);
     }
