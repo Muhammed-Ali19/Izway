@@ -95,13 +95,36 @@ class LocationService {
     return totalDist;
   }
 
-  int findClosestPointIndex(LatLng pos, List<LatLng> points) {
+  int findClosestPointIndex(LatLng pos, List<LatLng> points, {int startIdx = 0, int window = 50}) {
+    // Optimization: Search only within a window around startIdx
+    // If startIdx is -1 or window is very large, we search everything (fallback)
+    
+    int start = 0;
+    int end = points.length;
+    
+    if (startIdx != -1 && window > 0) {
+      start = (startIdx - window).clamp(0, points.length);
+      end = (startIdx + window + 1).clamp(0, points.length);
+      
+      // If window search fails (e.g. huge jump), should we fallback to full search?
+      // Logic below returns local minimum. If user jumped, we might need full search.
+      // For now, let's just do full search if startIdx is 0 (first run) or explicitly requested, 
+      // but the caller usually passes the last known index.
+      // To be safe: if minD found in window is too large, we could trigger full search?
+      // Let's keep it simple: Search Window first.
+    } else {
+       // Full search
+       start = 0;
+       end = points.length;
+    }
+
     double minD = double.infinity;
     int idx = -1;
     
-    // Optim: chercher seulement dans une fenêtre raisonnable si on suivait l'index précédent
-    // Ici version naïve: scan tout
-    for (int i = 0; i < points.length; i++) {
+    for (int i = start; i < end; i++) {
+       // Squared distance comparison is faster (avoid sqrt) if we just want index
+       // But Geolocator calculates real distance.
+       // Let's assume standard distanceBetween is fine for < 100 points/sec.
        double d = distanceBetween(pos, points[i]);
        if (d < minD) {
          minD = d;
@@ -109,8 +132,19 @@ class LocationService {
        }
     }
     
-    // Si la distance est trop grande (> 1km), l'utilisateur n'est peut-être pas sur cette route
-    if (minD > 1000) return -1;
+    // Fallback: If local search gave a bad result (> 200m) AND we didn't search everything, try full search
+    if (minD > 200 && (end - start) < points.length) {
+       // Trigger full search
+       for (int i = 0; i < points.length; i++) {
+           if (i >= start && i < end) continue; // Skip already checked
+           double d = distanceBetween(pos, points[i]);
+           if (d < minD) {
+             minD = d;
+             idx = i;
+           }
+       }
+    }
+    
     return idx;
   }
 }

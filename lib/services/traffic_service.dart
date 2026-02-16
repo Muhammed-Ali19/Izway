@@ -110,22 +110,26 @@ class TrafficService {
       out body;
     """;
 
-    final response = await http.post(
-      Uri.parse(_overpassUrl),
-      body: {'data': query},
-    ).timeout(const Duration(seconds: 5));
+    try {
+      final response = await http.post(
+        Uri.parse(_overpassUrl),
+        body: {'data': query},
+      ).timeout(const Duration(seconds: 5));
 
-    if (response.statusCode == 200) {
-      final Map<String, dynamic> data = json.decode(response.body);
-      final List<dynamic> elements = data['elements'] ?? [];
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = json.decode(response.body);
+        final List<dynamic> elements = data['elements'] ?? [];
 
-      return elements.map((e) => Alert(
-        id: "osm_${e['id']}",
-        type: AlertType.radar,
-        position: LatLng(e['lat'], e['lon']),
-        timestamp: DateTime.now(),
-        description: "Radar Fixe (OSM)",
-      )).toList();
+        return elements.map((e) => Alert(
+          id: "osm_${e['id']}",
+          type: AlertType.radar,
+          position: LatLng(e['lat'], e['lon']),
+          timestamp: DateTime.now(),
+          description: "Radar Fixe (OSM)",
+        )).toList();
+      }
+    } catch (e) {
+      print("Erreur Overpass Radar: $e");
     }
     
     return [];

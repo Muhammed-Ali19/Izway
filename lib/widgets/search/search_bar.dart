@@ -8,50 +8,66 @@ class ModernSearchBar extends StatelessWidget {
   final VoidCallback onClear;
 
   const ModernSearchBar({
-    Key? key,
+    super.key,
     required this.controller,
     required this.onSubmitted,
     required this.onChanged,
     this.isSearching = false,
     required this.onClear,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(top: 50, left: 16, right: 16),
+      margin: const EdgeInsets.only(top: 60, left: 16, right: 16),
       decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(30),
+        color: const Color(0xFF1E293B), // Slate
+        borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+            color: Colors.black.withValues(alpha: 0.3),
+            blurRadius: 15,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
       child: TextField(
         controller: controller,
-        style: TextStyle(fontSize: 16, color: Theme.of(context).textTheme.bodyLarge?.color),
+        style: const TextStyle(
+          fontSize: 16, 
+          color: Colors.white,
+          fontWeight: FontWeight.w500,
+        ),
         decoration: InputDecoration(
           hintText: "Où allez-vous ?",
-          hintStyle: TextStyle(color: Colors.grey[500]),
-          prefixIcon: const Icon(Icons.search, color: Colors.blueAccent),
+          hintStyle: TextStyle(
+            color: Colors.white.withValues(alpha: 0.4), 
+            fontSize: 16,
+          ),
+          prefixIcon: const Icon(
+            Icons.search_rounded, 
+            color: Colors.blueAccent,
+            size: 24,
+          ),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 14),
           suffixIcon: isSearching
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              ? UnconstrainedBox(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.blueAccent),
+                    ),
+                  ),
                 )
-              : (controller.text.isNotEmpty
+              : controller.text.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear, color: Colors.grey),
+                      icon: Icon(Icons.close_rounded, color: Colors.white.withValues(alpha: 0.5)),
                       onPressed: onClear,
                     )
-                  : null),
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                  : null,
         ),
         onSubmitted: onSubmitted,
         onChanged: onChanged,

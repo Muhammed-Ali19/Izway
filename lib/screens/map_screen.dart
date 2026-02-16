@@ -1,9 +1,11 @@
-import 'dart:async';
+import 'dart:math';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:convert';
+import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 
 
@@ -92,6 +94,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   int _currentLimit = 50; // Par défaut
   bool _isInRadarZone = false;
   bool _isCalculatingCountries = false;
+  
+  // Speed Limit Persistence
+  double _lastValidLimitDistance = 0.0;
+  int _lastKnownLimit = 50;
+  
+  // Optimization State
+  int _lastRouteIndex = 0; // Pour optimiser la recherche du point le plus proche
+  String? _lastSpokenInstruction;
 
   @override
   void initState() {
@@ -154,6 +164,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       }
     }
   }
+
+  
   
   void _checkNightMode() {
     final hour = DateTime.now().hour;
@@ -165,7 +177,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   void _initAnimation() {
     _markerAnimController = AnimationController(
       vsync: this, 
-      duration: const Duration(milliseconds: 300)
+      duration: const Duration(milliseconds: 100) // 100ms: Quasi-instantané pour coller à la réalité
     );
     _cameraAnimController = AnimationController(
       vsync: this,
@@ -237,7 +249,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       print("Erreur position initiale: $e");
     }
 
-    _locationService.getPositionStream(distanceFilter: 5).listen(
+    // Distance filter 2m: Compromis réactivité/stabilité
+    _locationService.getPositionStream(distanceFilter: 2).listen(
       (Position position) {
         _updatePosition(position);
       },
@@ -298,7 +311,50 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     
     setState(() {
       _currentPosition = position;
-      _currentHeading = position.heading;
+      
+      // Default: Raw GPS heading
+      double targetHeading = position.heading;
+      
+      // Fix for Laptop/Browser: If hardware heading is 0 but we are moving, infer heading from movement
+      if (targetHeading == 0 && _currentDisplayPosition != null && position.speed > 2.0) {
+          // Calculate bearing from last position
+          final dy = newPos.latitude - _currentDisplayPosition!.latitude;
+          final dx = cos(pi/180 * _currentDisplayPosition!.latitude) * (newPos.longitude - _currentDisplayPosition!.longitude);
+          final angle = atan2(dx, dy);
+          double bearing = angle * 180 / pi;
+          if (bearing < 0) bearing += 360;
+          targetHeading = bearing;
+      }
+
+      // Smart Heading (Map Matching)
+      // If we are navigating and close to the route, align with the road segment
+      if (_isNavigationMode && _routes.isNotEmpty) {
+        final route = _routes[_selectedRouteIndex];
+        final idx = _locationService.findClosestPointIndex(newPos, route.points);
+        
+        if (idx != -1 && idx < route.points.length - 1) {
+           final p1 = route.points[idx];
+           final p2 = route.points[idx+1];
+           final dist = _locationService.distanceBetween(newPos, p1);
+           
+           // If we are close enough (< 30m) and moving (> 5 km/h to avoid static jitter), snap to road
+           if (dist < 30 && position.speed > 1.5) {
+             // Calculate bearing between p1 and p2
+             // This is a simple rhumb line bearing or just atan2
+             
+             // Basic bearing formula
+             final dy = p2.latitude - p1.latitude;
+             final dx = cos(pi/180 * p1.latitude) * (p2.longitude - p1.longitude);
+             final angle = atan2(dx, dy); // radians
+             double bearing = angle * 180 / pi;
+             if (bearing < 0) bearing += 360;
+             
+             targetHeading = bearing;
+           }
+        }
+      }
+      
+      _currentHeading = targetHeading;
       _currentSpeed = position.speed * 3.6; // m/s to km/h
       
       // Mise à jour de la limite de vitesse basée sur la route
@@ -306,13 +362,35 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         final route = _routes[_selectedRouteIndex];
         final idx = _locationService.findClosestPointIndex(newPos, route.points);
         if (idx != -1 && route.speedLimits != null && idx < route.speedLimits!.length) {
-          final speedLimitMs = route.speedLimits![idx]; // OSRM renvoie souvent en m/s ou km/h selon version
-          // NOTE: Sur router.project-osrm.org, c'est souvent la vitesse "théorique" en m/s ou index.
-          // Pour cet exercice, on va assumer que c'est une valeur exploitable ou on garde le fallback.
-          if (speedLimitMs > 0) {
-            _currentLimit = (speedLimitMs * 3.6).round(); // Conversion si m/s
-            // Ajustement si OSRM renvoie des valeurs bizarres (ex: 130 km/h)
-            if (_currentLimit > 200) _currentLimit = (speedLimitMs).round(); 
+          final speedLimitKmh = route.speedLimits![idx];
+          
+          if (speedLimitKmh > 0) {
+            // Valid data found
+            _currentLimit = speedLimitKmh;
+            _lastKnownLimit = speedLimitKmh;
+            _lastValidLimitDistance = 0;
+          } else {
+            // Missing data (0) -> Use sticky logic
+            // Calculate distance since last update (approx based on speed * time? 
+            // Better: add distance to accumulator if we had previous position)
+            // For now, we increment loosely or just allow "persistence" for N position updates?
+            // Let's use distance logic if possible, but simplest is just:
+            // "Keep _lastKnownLimit until we have traveled X meters without update"
+            
+            // To do this simply without tracking precise distance delta here:
+            // Just keep _lastKnownLimit. 
+            // Only if it persists for VERY long (e.g. huge gap), maybe revert.
+            // But for highways, "holes" are usually short.
+            
+            // Let's implement a simple decay-based reset if needed, but "Unlimited Sticky" 
+            // until next valid sign is actually how real cars work (until a generic "End of zone" or intersection).
+            // Valhalla 0 means "unknown".
+            
+            _currentLimit = _lastKnownLimit;
+            
+            // Auto-fallback after huge distance?
+            // Let's rely on valid data coming back eventually.
+            // Only fallback if we strictly have NO initial data yet, which remains 50.
           }
         }
       }
@@ -339,8 +417,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       _trafficAlerts.removeWhere((a) => _alertService.isHidden(a.id));
     });
 
-    if (_isNavigationMode && _isFollowingUser) {
+    // Check off-route (Always check when in navigation, even if user panned away)
+    if (_isNavigationMode) {
       _checkOffRoute(position);
+      _checkStepProgression(newPos);
+      
+      // Auto-speech trigger: if instruction changed
+      if (_routes.isNotEmpty && 
+          _selectedRouteIndex < _routes.length && 
+          _routes[_selectedRouteIndex].steps.isNotEmpty) {
+        final currentInstruction = _routes[_selectedRouteIndex].steps.first.instruction;
+        if (currentInstruction != _lastSpokenInstruction) {
+          _lastSpokenInstruction = currentInstruction;
+        }
+      }
     }
     
     // Check next border distance
@@ -353,6 +443,23 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
     // Check if in radar zone for visual warning
     _checkRadarZone(newPos);
+  }
+
+  void _checkStepProgression(LatLng userPos) {
+    if (_routes.isEmpty || _selectedRouteIndex >= _routes.length) return;
+    
+    final route = _routes[_selectedRouteIndex];
+    if (route.steps.isEmpty) return;
+
+    // Seuil de 40m pour considérer une étape comme franchie
+    final double distToManeuver = _locationService.distanceBetween(userPos, route.steps.first.location);
+    
+    if (distToManeuver < 40 && route.steps.length > 1) {
+      print("NAV: Étape franchie, passage à la suivante.");
+      setState(() {
+        route.steps.removeAt(0);
+      });
+    }
   }
 
   void _checkRadarZone(LatLng userPos) {
@@ -456,23 +563,37 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   void _checkOffRoute(Position position) {
-    if (_routes.isEmpty || _destination == null) return;
+    // 1. Guard: Don't check if already calculating or no route
+    if (_routes.isEmpty || _destination == null || _isRouting) return;
     
     final route = _routes[_selectedRouteIndex];
-    double minDist = double.infinity;
     
-    // Simple check: distance au point le plus proche
-    // Optimisation possible: check seulement sur le segment actuel
-    for (var point in route.points) {
-      final dist = _locationService.distanceBetween(
-        LatLng(position.latitude, position.longitude),
-        point
-      );
-      if (dist < minDist) minDist = dist;
+    // 2. Optimization: Sliding Window Search
+    LatLng userLatLng = LatLng(position.latitude, position.longitude);
+    
+    // Check points around our last known index to improve performance
+    int closestIdx = _locationService.findClosestPointIndex(
+       userLatLng, 
+       route.points, 
+       startIdx: _lastRouteIndex, 
+       window: 200 // Search 200 points around last position
+    );
+    
+    double minDist = double.infinity;
+    if (closestIdx != -1) {
+       minDist = _locationService.distanceBetween(userLatLng, route.points[closestIdx]);
+       _lastRouteIndex = closestIdx; // Update hint for next time
     }
 
+    // 3. Trigger Recalculation
+    // Threshold: 50m is standard, but maybe too lenient for highway exits?
+    // Let's keep 50m but ensure reaction is fast.
     if (minDist > 50) {
       print("Hors route (${minDist.round()}m) - Recalcul automatique...");
+      
+      // Debounce? No, we want fast reaction. 
+      // But we MUST set _isRouting = true immediately in _calculateRoutes (it does).
+      
       _calculateRoutes(_destination!, autoResume: true);
     }
   }
@@ -527,8 +648,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       if (!autoResume && !autoStart) _isNavigationMode = false;
     });
 
-    final start = LatLng(_currentPosition!.latitude, _currentPosition!.longitude);
-    final routes = await _routeService.calculateRoutes(start, dest);
+    final LatLng start = _currentDisplayPosition ?? LatLng(_currentPosition!.latitude, _currentPosition!.longitude);
+    
+    try {
+      final routes = await _routeService.calculateRoutes(start, dest);
 
       if (routes.isEmpty) {
         setState(() => _isRouting = false);
@@ -565,6 +688,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         if (autoResume || autoStart) {
           _isNavigationMode = true;
           _isFollowingUser = true;
+
+          // Guidage Vocal : Annoncer la première instruction si disponible
+          if (routes.isNotEmpty && routes.first.steps.isNotEmpty) {
+             final firstInstruction = routes.first.steps.first.instruction;
+             _lastSpokenInstruction = firstInstruction;
+          }
+        } else {
+          // Speak initial route (first in list) if not auto-starting
+          if (routes.isNotEmpty && routes.first.steps.isNotEmpty) {
+             final firstInstruction = routes.first.steps.first.instruction;
+             _lastSpokenInstruction = firstInstruction;
+          }
         }
 
         // 3. Calculer les pays traversés (Directement depuis Valhalla)
@@ -574,6 +709,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         // 4. Récupérer les radars sur TOUTE la route (Async)
         _fetchRouteAlerts(routes.first.points);
       });
+    } catch (e) {
+      print("Error calculating routes: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erreur lors du calcul de l'itinéraire: $e")),
+        );
+      }
+      setState(() {
+        _isRouting = false;
+      });
+    }
   }
 
   Future<void> _fetchRouteAlerts(List<LatLng> points) async {
@@ -947,23 +1093,38 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           if (_isInRadarZone)
             Positioned(
               top: 110,
-              left: 20,
-              right: 20,
+              left: 16,
+              right: 16,
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.orange[800]!.withOpacity(0.95),
+                  color: const Color(0xFFB91C1C), // Professional Dark Red
                   borderRadius: BorderRadius.circular(12),
-                  boxShadow: [BoxShadow(blurRadius: 10, color: Colors.black45)],
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.4),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
                 ),
-                child: Row(
+                child: const Row(
                   children: [
-                    const Icon(Icons.speed, color: Colors.white, size: 30),
-                    const SizedBox(width: 15),
-                    const Expanded(
-                      child: Text(
-                        "ZONE DE CONTRÔLE RADAR",
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                    Icon(Icons.privacy_tip_rounded, color: Colors.white, size: 28),
+                    SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Zone de contrôle",
+                            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5),
+                          ),
+                          Text(
+                            "Radar à proximité",
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -973,7 +1134,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
           // Speed Limit & Recenter Button
           Positioned(
-            bottom: _isNavigationMode ? 260 : 120,
+            bottom: _isNavigationMode ? 280 : 130, // Légèrement plus haut pour le dashboard
             right: 16,
             child: Column(
               children: [
@@ -982,27 +1143,43 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                      limit: _currentLimit,
                      isSpeeding: _isSpeeding,
                    ), 
-                const SizedBox(height: 10),
-                FloatingActionButton(
-                  heroTag: "recenter",
-                  backgroundColor: const Color(0xFF1E293B),
-                  child: Icon(_isFollowingUser ? Icons.gps_fixed : Icons.gps_not_fixed, color: Colors.blueAccent),
-                  onPressed: () {
+                const SizedBox(height: 12),
+                GestureDetector(
+                  onTap: () {
                     setState(() => _isFollowingUser = true);
                     if (_currentPosition != null) {
                       _mapController.move(LatLng(_currentPosition!.latitude, _currentPosition!.longitude), 17);
                       if (_isNavigationMode) _mapController.rotate(-_currentHeading);
                     }
                   },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E293B), // Slate
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.4),
+                          blurRadius: 18,
+                          offset: const Offset(0, 6),
+                        )
+                      ],
+                    ),
+                    child: Icon(
+                      _isFollowingUser ? Icons.gps_fixed_rounded : Icons.gps_not_fixed_rounded, 
+                      color: Colors.blueAccent,
+                      size: 24,
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
 
-          // Alert Buttons (EN Navigation OU si on suit l'utilisateur)
+          // Alert Buttons
           if ((_isNavigationMode || _isFollowingUser) && _currentPosition != null)
              Positioned(
-               bottom: _isNavigationMode ? 220 : 120, // Ajuster selon le dashboard
+               bottom: _isNavigationMode ? 280 : 130,
                left: 16,
                child: AlertButtons(onAlertSelected: _onAlertReported),
              ),
@@ -1011,49 +1188,76 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           if (_activeValidationAlert != null)
             Positioned(
               bottom: 120,
-              left: 20,
-              right: 20,
+              left: 16,
+              right: 16,
               child: Container(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1E293B).withOpacity(0.95),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [BoxShadow(blurRadius: 10, color: Colors.black45)],
+                  color: const Color(0xFF1E293B), // Slate
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      blurRadius: 25,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      "Signalement : ${_activeValidationAlert!.label} ${_activeValidationAlert!.icon}",
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                    const Text(
+                      "Toujours là ?",
+                      style: TextStyle(
+                        color: Colors.white, 
+                        fontSize: 20, 
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.3,
+                      ),
                     ),
                     const SizedBox(height: 8),
-                    const Text(
-                      "Est-il toujours présent ?",
-                      style: TextStyle(color: Colors.white70),
+                    Text(
+                      _activeValidationAlert!.type == AlertType.police ? "Police" : "Accident",
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 14),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 24),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        ElevatedButton.icon(
-                          onPressed: () => _voteForAlert(_activeValidationAlert!, false),
-                          icon: const Icon(Icons.close, color: Colors.white),
-                          label: const Text("NON", style: TextStyle(color: Colors.white)),
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red[700]),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => _voteForAlert(_activeValidationAlert!, false),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                            ),
+                            child: const Text("Non", style: TextStyle(fontSize: 16)),
+                          ),
                         ),
-                        ElevatedButton.icon(
-                          onPressed: () => _voteForAlert(_activeValidationAlert!, true),
-                          icon: const Icon(Icons.check, color: Colors.white),
-                          label: const Text("OUI", style: TextStyle(color: Colors.white)),
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.green[700]),
-                        ),
-                        IconButton(
-                          onPressed: () => _deleteAlert(_activeValidationAlert!),
-                          icon: const Icon(Icons.delete, color: Colors.white70),
-                          tooltip: "Supprimer",
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () => _voteForAlert(_activeValidationAlert!, true),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blueAccent,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              elevation: 0,
+                            ),
+                            child: const Text("Oui", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: () => _deleteAlert(_activeValidationAlert!),
+                      child: Text(
+                        "Pas là",
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 14),
+                      ),
                     ),
                   ],
                 ),
@@ -1066,12 +1270,19 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                bottom: 0,
                left: 0,
                right: 0,
-               child: RouteSelector(
-                 routes: _routes,
-                 selectedIndex: _selectedRouteIndex,
-                 onRouteSelected: (i) => setState(() => _selectedRouteIndex = i),
-                 onStartNavigation: _startNavigation,
-               ),
+                child: RouteSelector(
+                  routes: _routes,
+                  selectedIndex: _selectedRouteIndex,
+                  onRouteSelected: (i) {
+                    setState(() => _selectedRouteIndex = i);
+                    // Speak first instruction immediately when choosing a route
+                    if (_routes.isNotEmpty && i < _routes.length && _routes[i].steps.isNotEmpty) {
+                      final firstInstruction = _routes[i].steps[0].instruction;
+                      _lastSpokenInstruction = firstInstruction;
+                    }
+                  },
+                  onStartNavigation: _startNavigation,
+                ),
              ),
              
           // Navigation Dashboard (si en nav)
@@ -1092,14 +1303,40 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
              
           if (_isRouting)
             Container(
-              color: Colors.black54,
+              color: Colors.black.withValues(alpha: 0.8),
               child: const Center(
-                child: CircularProgressIndicator(color: Colors.blueAccent),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: Color(0xFF00E5FF)),
+                    SizedBox(height: 16),
+                    Text(
+                      "Calcul de l'itinéraire...",
+                      style: TextStyle(color: Color(0xFF00E5FF), fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                  ],
+                ),
               ),
             ),
+          
+          // Debug Version Overlay
+          Positioned(
+            bottom: 8,
+            left: 8,
+            child: Text(
+              "VERSION 3.1 - DEBUG MODE",
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.2),
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ),
 
         ],
       ),
     );
   }
+
 }

@@ -1,10 +1,13 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../models/route_models.dart';
 
 class SearchService {
-  static const String _baseUrl = 'http://127.0.0.1:8001/api.php';
+  static const String _baseUrl = kReleaseMode 
+      ? 'https://muhammed-ali.fr/web/api.php' 
+      : 'http://127.0.0.1:8001/api.php';
 
   // Rechercher des lieux via Nominatim
   Future<List<SearchResult>> searchPlaces(String query, LatLng? currentPosition) async {

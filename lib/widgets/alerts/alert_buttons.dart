@@ -1,17 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:latlong2/latlong.dart';
 import '../../models/alert.dart';
 
 class AlertButtons extends StatefulWidget {
   final Function(AlertType) onAlertSelected;
 
-  const AlertButtons({Key? key, required this.onAlertSelected}) : super(key: key);
+  const AlertButtons({super.key, required this.onAlertSelected});
 
   @override
-  _AlertButtonsState createState() => _AlertButtonsState();
+  AlertButtonsState createState() => AlertButtonsState();
 }
 
-class _AlertButtonsState extends State<AlertButtons> with SingleTickerProviderStateMixin {
+class AlertButtonsState extends State<AlertButtons> with SingleTickerProviderStateMixin {
   bool _isExpanded = false;
   late AnimationController _controller;
   late Animation<double> _animation;
@@ -25,7 +24,7 @@ class _AlertButtonsState extends State<AlertButtons> with SingleTickerProviderSt
     );
     _animation = CurvedAnimation(
       parent: _controller,
-      curve: Curves.easeOut,
+      curve: Curves.easeOutBack,
     );
   }
 
@@ -52,63 +51,67 @@ class _AlertButtonsState extends State<AlertButtons> with SingleTickerProviderSt
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        if (_isExpanded) ...[
-          _buildAlertButton(AlertType.police, "Police", Colors.blue),
-          const SizedBox(height: 10),
-          _buildAlertButton(AlertType.accident, "Accident", Colors.red),
-          const SizedBox(height: 15),
+        if (_isExpanded || !_controller.isDismissed) ...[
+          _buildAlertButton(AlertType.police, Icons.local_police_rounded, Colors.blueAccent),
+          const SizedBox(height: 12),
+          _buildAlertButton(AlertType.accident, Icons.warning_rounded, const Color(0xFFEF4444)),
+          const SizedBox(height: 12),
         ],
-        FloatingActionButton(
-          onPressed: _toggleMenu,
-          backgroundColor: _isExpanded ? Colors.grey[800] : Colors.orangeAccent,
-          child: Icon(
-            _isExpanded ? Icons.close : Icons.add_alert_rounded,
-            color: Colors.white,
-            size: 28,
+        GestureDetector(
+          onTap: _toggleMenu,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E293B), // Slate
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  blurRadius: 15,
+                  offset: const Offset(0, 6),
+                )
+              ],
+            ),
+            child: RotationTransition(
+              turns: Tween(begin: 0.0, end: 0.125).animate(_animation),
+              child: Icon(
+                _isExpanded ? Icons.add_rounded : Icons.report_rounded, 
+                color: _isExpanded ? Colors.white.withValues(alpha: 0.5) : Colors.blueAccent, 
+                size: 28
+              ),
+            ),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildAlertButton(AlertType type, String label, Color color) {
-    final alert = Alert(
-      id: '', 
-      type: type, 
-      position: const LatLng(0,0), // Dummy
-      timestamp: DateTime.now()
-    );
-
+  Widget _buildAlertButton(AlertType type, IconData icon, Color color) {
     return ScaleTransition(
       scale: _animation,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: FadeTransition(
+        opacity: _animation,
+        child: GestureDetector(
+          onTap: () {
+            widget.onAlertSelected(type);
+            _toggleMenu();
+          },
+          child: Container(
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.black87,
-              borderRadius: BorderRadius.circular(20),
+              color: const Color(0xFF1E293B), // Slate
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                )
+              ],
             ),
-            child: Text(
-              label,
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
+            child: Icon(icon, color: color, size: 24),
           ),
-          const SizedBox(width: 10),
-          FloatingActionButton.small(
-            heroTag: "btn_$label",
-            onPressed: () {
-              widget.onAlertSelected(type);
-              _toggleMenu();
-            },
-            backgroundColor: color,
-            child: Text(
-              alert.icon,
-              style: const TextStyle(fontSize: 20),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:latlong2/latlong.dart';
@@ -23,8 +24,9 @@ class Peer {
 
 class UserService {
   static const String _userKey = 'user_unique_id';
-  // static const String _baseUrl = 'https://muhammed-ali.fr/gps/api.php';
-  static const String _baseUrl = 'http://127.0.0.1:8001/api.php';
+  static const String _baseUrl = kReleaseMode 
+      ? 'https://muhammed-ali.fr/web/api.php' 
+      : 'http://127.0.0.1:8001/api.php';
   
   String? _userId;
 

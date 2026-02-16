@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:latlong2/latlong.dart';
@@ -10,8 +11,9 @@ class AlertService {
   static const String _hiddenAlertsKey = 'hidden_alerts';
   
   // Production URL
-  // static const String _baseUrl = 'https://muhammed-ali.fr/gpsfrontiere/api.php'; 
-  static const String _baseUrl = 'http://127.0.0.1:8001/api.php';
+  static const String _baseUrl = kReleaseMode 
+      ? 'https://muhammed-ali.fr/web/api.php' 
+      : 'http://127.0.0.1:8001/api.php';
   
   final List<Alert> _alerts = [];
   final Set<String> _votedIds = {};

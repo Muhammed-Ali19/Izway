@@ -5,40 +5,39 @@ class SpeedLimitWidget extends StatelessWidget {
   final bool isSpeeding;
 
   const SpeedLimitWidget({
-    Key? key,
+    super.key,
     required this.limit,
     this.isSpeeding = false,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      width: 65,
-      height: 65,
+    return Container(
+      width: 54,
+      height: 54,
       decoration: BoxDecoration(
         color: Colors.white,
         shape: BoxShape.circle,
         border: Border.all(
-          color: isSpeeding ? Colors.redAccent : Colors.red, 
-          width: isSpeeding ? 8 : 6
+          color: const Color(0xFFFF3B30), // iOS Red
+          width: 5,
         ),
         boxShadow: [
           BoxShadow(
-            color: isSpeeding ? Colors.red.withOpacity(0.6) : Colors.black.withOpacity(0.2),
-            blurRadius: isSpeeding ? 15 : 6,
-            spreadRadius: isSpeeding ? 5 : 0,
-            offset: const Offset(0, 2),
-          ),
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 15,
+            offset: const Offset(0, 6),
+          )
         ],
       ),
       child: Center(
         child: Text(
           limit.toString(),
-          style: TextStyle(
-            color: isSpeeding ? Colors.red[900] : Colors.black,
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
+          style: const TextStyle(
+            color: Colors.black,
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -1,
           ),
         ),
       ),

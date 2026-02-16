@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 
 class InstructionBanner extends StatelessWidget {
@@ -7,58 +6,63 @@ class InstructionBanner extends StatelessWidget {
   final IconData icon;
 
   const InstructionBanner({
-    Key? key,
+    super.key,
     required this.instruction,
     required this.distance,
     this.icon = Icons.turn_right,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
     return Positioned(
-      top: 50,
+      top: 60,
       left: 16,
       right: 16,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E293B).withOpacity(0.7), // Glassy dark blue
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white.withOpacity(0.2)),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B), // Slate
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.4),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
             ),
-            child: Row(
+          ],
+        ),
+        child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.green,
-                borderRadius: BorderRadius.circular(12),
+                color: Colors.blueAccent.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(icon, color: Colors.white, size: 32),
+              child: Icon(icon, color: Colors.blueAccent, size: 36),
             ),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    distance,
+                    distance.toUpperCase(),
                     style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
+                      color: Colors.blueAccent,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.5,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   Text(
                     instruction,
                     style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -67,8 +71,6 @@ class InstructionBanner extends StatelessWidget {
               ),
             ),
           ],
-            ),
-          ),
         ),
       ),
     );
