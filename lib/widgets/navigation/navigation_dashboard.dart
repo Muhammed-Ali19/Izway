@@ -6,6 +6,7 @@ class NavigationDashboard extends StatelessWidget {
   final String eta;
   final String? nextBorderDist;
   final String? nextBorderFlag;
+  final int alertCount;
   final VoidCallback onStopNavigation;
 
   const NavigationDashboard({
@@ -15,131 +16,146 @@ class NavigationDashboard extends StatelessWidget {
     required this.eta,
     this.nextBorderDist,
     this.nextBorderFlag,
+    this.alertCount = 0,
     required this.onStopNavigation,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F172A), // Navy
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(20),
-          topRight: Radius.circular(20),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.5),
-            blurRadius: 20,
-            offset: const Offset(0, -5),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "ARRIVÉE",
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.5), 
-                        fontSize: 12, 
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.0,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      duration,
-                      style: const TextStyle(
-                        color: Color(0xFF34D399), // Emerald/Green (Improved Base)
-                        fontSize: 32,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ],
-                ),
+    return Positioned(
+      bottom: 0,
+      left: 0,
+      right: 0,
+      child: GestureDetector(
+        onLongPress: () => _showDebugInfo(context),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A).withOpacity(0.95),
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.3),
+                blurRadius: 10,
+                offset: const Offset(0, -2),
               ),
-              _buildStatBlock("DIST.", distance),
-              const SizedBox(width: 24),
-              _buildStatBlock("ETA", eta),
             ],
           ),
-          const SizedBox(height: 24),
-          if (nextBorderDist != null) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E293B), // Slate
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Main Stats Row + Exit Button
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Text(nextBorderFlag ?? "🌍", style: const TextStyle(fontSize: 22)),
-                  const SizedBox(width: 12),
-                  Text(
-                    "FRONTIÈRE: ",
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 14, fontWeight: FontWeight.w600),
+                  // Duration (Main focus)
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          duration,
+                          style: const TextStyle(
+                            color: Color(0xFF34D399),
+                            fontSize: 28, // Smaller than 32
+                            fontWeight: FontWeight.w900,
+                            height: 1.0,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            _buildInlineStat(distance, Icons.social_distance),
+                            const SizedBox(width: 12),
+                            _buildInlineStat("Arrivé à  $eta", Icons.schedule),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                  Text(
-                    nextBorderDist!,
-                    style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900),
+                  
+                  // Exit Button (Compact)
+                  Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEF4444).withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: IconButton(
+                      onPressed: onStopNavigation,
+                      icon: const Icon(Icons.close, color: Color(0xFFEF4444)),
+                      tooltip: "Quitter",
+                    ),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 24),
-          ],
-          SizedBox(
-            width: double.infinity,
-            height: 60,
-            child: ElevatedButton(
-              onPressed: onStopNavigation,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFEF4444), // Red-500
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+              
+              // Optional Border Alert (Compact)
+              if (nextBorderDist != null) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E293B),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white.withOpacity(0.1)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(nextBorderFlag ?? "🌍", style: const TextStyle(fontSize: 16)),
+                      const SizedBox(width: 8),
+                      Text(
+                        "Frontière dans $nextBorderDist",
+                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              child: const Text(
-                "ARRÊTER LA NAVIGATION",
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 0.5),
-              ),
-            ),
+              ],
+            ],
           ),
+        ),
+      ),
+    );
+  }
+
+  void _showDebugInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Debug Info", style: TextStyle(color: Colors.black)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Next Border: $nextBorderDist"),
+            Text("Flag: $nextBorderFlag"),
+            Text("Active Alerts (Debug): $alertCount"),
+            const SizedBox(height: 8),
+            Text("Check Console logs for 'DEBUG: Border found' messages."),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))
         ],
       ),
     );
   }
 
-  Widget _buildStatBlock(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.end,
+  Widget _buildInlineStat(String value, IconData icon) {
+    return Row(
       children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.5), 
-            fontSize: 11, 
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 2),
+        Icon(icon, size: 14, color: Colors.white.withOpacity(0.5)),
+        const SizedBox(width: 4),
         Text(
           value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.8),
+            fontSize: 14, 
+            fontWeight: FontWeight.w600,
           ),
         ),
       ],

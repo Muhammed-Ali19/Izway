@@ -229,6 +229,7 @@ class RouteService {
            if (lastAdminIndex != -1 && currentAdminIndex != lastAdminIndex) {
              if (currentAdminIndex < adminIsoCodes.length) {
                String country = adminIsoCodes[currentAdminIndex];
+               print("DEBUG: Valhalla Parsed Border -> $country at index ${globalPointIndex + j}");
                borderCrossings.add(MapEntry(globalPointIndex + j, country));
              }
            }

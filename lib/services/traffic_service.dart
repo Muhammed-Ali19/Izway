@@ -53,6 +53,7 @@ class TrafficService {
        double r = 0.3; // ~30km radius box
        String bbox = '${center.latitude - r},${center.longitude - r},${center.latitude + r},${center.longitude + r}';
        unionQuery += 'node["highway"="speed_camera"]($bbox);';
+       unionQuery += 'node["man_made"="monitoring_station"]["monitoring:traffic"]($bbox);';
     }
     
     unionQuery += "); out body;";
@@ -101,8 +102,9 @@ class TrafficService {
     String bbox = '${center.latitude - latDelta},${center.longitude - lonDelta},${center.latitude + latDelta},${center.longitude + lonDelta}';
 
     // Query Overpass: nodes with "highway=speed_camera" or "man_made=monitoring_station"
+    // Query Overpass: nodes with "highway=speed_camera" or "man_made=monitoring_station"
     String query = """
-      [out:json][timeout:5];
+      [out:json][timeout:15];
       (
         node["highway"="speed_camera"]($bbox);
         node["man_made"="monitoring_station"]["monitoring:traffic"]($bbox);
@@ -114,7 +116,7 @@ class TrafficService {
       final response = await http.post(
         Uri.parse(_overpassUrl),
         body: {'data': query},
-      ).timeout(const Duration(seconds: 5));
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = json.decode(response.body);

@@ -12,6 +12,8 @@ class SpeedLimitWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (limit <= 0) return const SizedBox.shrink();
+
     return Container(
       width: 54,
       height: 54,

@@ -15,33 +15,33 @@ class InstructionBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Positioned(
-      top: 60,
+      top: 50, // Slightly higher
       left: 16,
       right: 16,
       child: Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), // Compact padding
         decoration: BoxDecoration(
-          color: const Color(0xFF1E293B), // Slate
+          color: const Color(0xFF1E293B).withOpacity(0.95), 
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.4),
-              blurRadius: 20,
-              offset: const Offset(0, 10),
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
         child: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(8), // Smaller icon box
               decoration: BoxDecoration(
-                color: Colors.blueAccent.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(10),
+                color: Colors.blueAccent.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(icon, color: Colors.blueAccent, size: 36),
+              child: Icon(icon, color: Colors.blueAccent, size: 28), // Smaller icon
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -51,18 +51,18 @@ class InstructionBanner extends StatelessWidget {
                     distance.toUpperCase(),
                     style: const TextStyle(
                       color: Colors.blueAccent,
-                      fontSize: 14,
+                      fontSize: 12,
                       fontWeight: FontWeight.w900,
-                      letterSpacing: 1.5,
+                      letterSpacing: 1.2,
                     ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 1),
                   Text(
                     instruction,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 16, // Smaller font
+                      fontWeight: FontWeight.w700,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,

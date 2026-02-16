@@ -97,13 +97,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   bool _isDarkMode = false;
   double _currentSpeed = 0.0;
   bool _isSpeeding = false;
-  int _currentLimit = 50; // Par défaut
+  int _currentLimit = 0; // 0 = Inconnu
   bool _isInRadarZone = false;
   bool _isCalculatingCountries = false;
+  bool _showTraffic = false; // Toggle pour le trafic
   
   // Speed Limit Persistence
   double _lastValidLimitDistance = 0.0;
-  int _lastKnownLimit = 50;
+  int _lastKnownLimit = 0;
   
   // Optimization State
   int _lastRouteIndex = 0; // Pour optimiser la recherche du point le plus proche
@@ -283,20 +284,27 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     // Utiliser la position GPS si dispo, sinon le centre de la carte
     final LatLng center = _currentDisplayPosition ?? _mapController.camera.center;
     
-    // 1. Local/User alerts (Police, Accident)
+    // 1. Local/User alerts (Police, Accident) - FAST
     final userAlerts = await _alertService.getAlertsNearby(center, 250000); // 250km
     
-    // 2. API Traffic alerts (Radar, Bouchon)
-    List<Alert> apiAlerts = [];
-    if (_routes.isEmpty) {
-       apiAlerts = await _trafficService.fetchTrafficAlerts(center, 50);
-       _trafficAlerts = apiAlerts;
-    }
-
     if (mounted) {
       setState(() {
         _nearbyAlerts = userAlerts;
       });
+    }
+    
+    // 2. API Traffic alerts (Radar, Bouchon) - SLOW (Network)
+    // We launch this AFTER updating local alerts so the UI doesn't freeze or wait.
+    try {
+      final apiAlerts = await _trafficService.fetchTrafficAlerts(center, 50);
+      
+      if (mounted) {
+        setState(() {
+          _trafficAlerts = apiAlerts;
+        });
+      }
+    } catch (e) {
+      print("Erreur fetch traffic alerts: $e");
     }
   }
 
@@ -512,7 +520,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     if (_routes.isEmpty) return;
     
     final route = _routes[_selectedRouteIndex];
-    if (route.borderCrossings == null || route.borderCrossings!.isEmpty) return;
+    
+    // Debug info
+    print("DEBUG: _checkNextBorder - Route has ${route.borderCrossings?.length ?? 0} crossings.");
+    
+    if (route.borderCrossings == null || route.borderCrossings!.isEmpty) {
+        // print("DEBUG: No border crossings in route.");
+        return;
+    }
 
     // Find closest point index on route
     final int currentIdx = _locationService.findClosestPointIndex(userPos, route.points);
@@ -542,6 +557,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
          }
        }
 
+       print("DEBUG: Border found at ${dist.round()}m (Flag: ${nextCrossing.value})");
+
        if (dist > 500) { // Show if > 500m
           final dKm = (dist / 1000).toStringAsFixed(1);
           setState(() {
@@ -567,6 +584,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       });
     }
   }
+
 
   void _checkOffRoute(Position position) {
     // 1. Guard: Don't check if already calculating or no route
@@ -922,39 +940,62 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 maxZoom: 19,
               ),
 
-              // TRAFFIC LAYER (MapTiler)
-              // Requires API KEY: https://cloud.maptiler.com/account/keys
-              // Polylines
-              PolylineLayer(
-                polylines: <Polyline>[
-                  // REAL ROUTES
-                  if (_routes.isNotEmpty)
-                    ..._routes.asMap().entries.map<Polyline>((entry) {
-                      final i = entry.key;
-                      final route = entry.value;
-                      final isSelected = i == _selectedRouteIndex;
-                      
-                      return Polyline(
-                        points: route.points,
-                        strokeWidth: isSelected ? 8.0 : 4.0,
-                        color: isSelected ? const Color(0xFF2196F3) : Colors.blueGrey.withOpacity(0.6),
-                        borderStrokeWidth: isSelected ? 2.0 : 0.0,
-                        borderColor: Colors.white.withOpacity(0.4),
-                      );
-                    }),
-                ],
-              ),
 
-              // TRAFFIC LAYER (Google Overlay - Reliable Fallback)
-              // Moved AFTER PolylineLayer so traffic colors appear ON TOP of the blue route line.
-              Opacity(
-                opacity: 0.6,
+
+
+              // TRAFFIC LAYER (Google Hybrid - Transparent Background)
+              // lyrs=h,traffic -> Hybrid (Roads + Labels + Traffic) with transparent background
+              // This allows the violet route to show through the "empty" parts, 
+              // while traffic lines appear sharply on top without opacity blending.
+              // GOOGLE MAPS LAYER (Overlay) -> ANIMATED CROSS-FADE
+              // Layer 1: Clean (Roads + Labels) - Visible when Traffic starts OFF
+              AnimatedOpacity(
+                opacity: _showTraffic ? 0.0 : 1.0,
+                duration: const Duration(milliseconds: 600),
+                curve: Curves.easeInOut,
                 child: TileLayer(
-                  urlTemplate: 'https://mt1.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}',
+                  urlTemplate: 'https://mt1.google.com/vt/lyrs=h&x={x}&y={y}&z={z}',
                   userAgentPackageName: 'com.alihirlak.gpsfrontiere',
                   maxNativeZoom: 19,
                   maxZoom: 19,
                 ),
+              ),
+
+              // Layer 2: Traffic (Roads + Labels + Traffic) - Visible when Traffic starts ON
+              AnimatedOpacity(
+                opacity: _showTraffic ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 600),
+                curve: Curves.easeInOut,
+                child: TileLayer(
+                  urlTemplate: 'https://mt1.google.com/vt/lyrs=h,traffic&x={x}&y={y}&z={z}',
+                  userAgentPackageName: 'com.alihirlak.gpsfrontiere',
+                  maxNativeZoom: 19,
+                  maxZoom: 19,
+                ),
+              ),
+
+              // Polylines (Routes)
+              // MOVED TO TOP (After Maps) so it's always visible.
+              PolylineLayer(
+                polylines: [
+                  // REAL ROUTES
+                  if (_routes.isNotEmpty)
+                    ..._routes.asMap().entries.map<Polyline>((entry) {
+                      final index = entry.key;
+                      final route = entry.value;
+                      final isSelected = index == _selectedRouteIndex;
+                      
+                      return Polyline(
+                        points: route.points,
+                        strokeWidth: isSelected ? 9.0 : 5.0, // Slightly thinner than 12
+                        color: isSelected 
+                          ? const Color(0xFF8B5CF6) // Violet-500
+                          : Colors.grey.withOpacity(0.5),
+                        borderStrokeWidth: isSelected ? 3.0 : 0.0,
+                        borderColor: isSelected ? Colors.white : Colors.transparent,
+                      );
+                    }).toList(),
+                ],
               ),
                 
               // Markers (Destination + Alerts + User)
@@ -992,28 +1033,37 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   
                   // Alerts (User + Traffic)
                   ...[..._nearbyAlerts, ..._trafficAlerts].where((a) => !_alertService.isHidden(a.id)).map((alert) {
+                    // Calculate distance for dynamic sizing
                     final dist = (_currentDisplayPosition != null) 
                       ? _locationService.distanceBetween(_currentDisplayPosition!, alert.position)
                       : 999999.0;
-                      
-                    if (alert.type == AlertType.radar && dist > 5000) return null; // Hide very far radars
+
+                    // FIX: Show all route alerts (radars), don't hide them if > 5km!
+                    // if (alert.type == AlertType.radar && dist > 5000) return null; 
                     
                     // Dynamic size based on distance
-                    double size = (dist < 1000) ? 45.0 : 30.0;
-                    double iconSize = (dist < 1000) ? 28.0 : 18.0;
+                    double size = (dist < 1000) ? 50.0 : 35.0; // Bigger: 45->50, 30->35
+                    double iconSize = (dist < 1000) ? 32.0 : 22.0;
 
                     return Marker(
                       point: alert.position,
                       width: size,
                       height: size,
                       child: GestureDetector(
-                        onTap: () => setState(() => _activeValidationAlert = alert),
+                        onTap: alert.type == AlertType.radar 
+                          ? null // Les radars fixes ne sont pas validables/supprimables
+                          : () => setState(() => _activeValidationAlert = alert),
                         child: Container(
                           decoration: BoxDecoration(
-                            color: alert.type == AlertType.radar ? Colors.orange.withOpacity(0.9) : Colors.white,
+                            color: alert.type == AlertType.radar ? Colors.orangeAccent : Colors.white,
                             shape: BoxShape.circle,
-                            boxShadow: const [BoxShadow(blurRadius: 5, color: Colors.black26)],
-                            border: alert.type == AlertType.radar ? Border.all(color: Colors.white, width: 2) : null,
+                            boxShadow: const [
+                               BoxShadow(blurRadius: 8, color: Colors.black54, offset: Offset(0, 4))
+                            ],
+                            border: Border.all(
+                               color: alert.type == AlertType.radar ? Colors.white : Colors.blueGrey, 
+                               width: 3
+                            ),
                           ),
                           child: Center(child: Text(alert.icon, style: TextStyle(fontSize: iconSize))),
                         ),
@@ -1197,6 +1247,37 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                      isSpeeding: _isSpeeding,
                    ), 
                 const SizedBox(height: 12),
+                
+                // Traffic Toggle Button
+                GestureDetector(
+                  onTap: () => setState(() => _showTraffic = !_showTraffic),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _showTraffic ? Colors.blueAccent : const Color(0xFF1E293B),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.4),
+                          blurRadius: 18,
+                          offset: const Offset(0, 6),
+                        )
+                      ],
+                      border: _showTraffic ? Border.all(color: Colors.white, width: 2) : null,
+                    ),
+                    child: Icon(
+                      Icons.traffic_rounded, 
+                      color: _showTraffic ? Colors.white : Colors.white.withOpacity(0.5),
+                      size: 24,
+                    ),
+                  ),
+                ),
+                
+                const SizedBox(height: 12),
+
+                // Recenter Button
                 GestureDetector(
                   onTap: () {
                     setState(() => _isFollowingUser = true);
@@ -1350,6 +1431,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   eta: eta,
                   nextBorderDist: _nextBorderDist,
                   nextBorderFlag: _nextBorderFlag,
+                  alertCount: _nearbyAlerts.length + _trafficAlerts.length,
                   onStopNavigation: _stopNavigation,
                 ),
              ),
