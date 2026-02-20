@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 
 class SpeedLimitService {
@@ -30,7 +31,7 @@ class SpeedLimitService {
       final response = await http.post(
         Uri.parse(_overpassUrl),
         body: {'data': query},
-      ).timeout(const Duration(seconds: 3));
+      ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -51,7 +52,7 @@ class SpeedLimitService {
         }
       }
     } catch (e) {
-      print("SpeedLimitService Error: $e");
+      debugPrint("SpeedLimitService Error: $e");
     }
     
     return null; // Pas trouvé ou erreur

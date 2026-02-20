@@ -23,11 +23,11 @@ class RouteSelector extends StatelessWidget {
     return Container(
       height: 240, 
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.9), 
+        color: Colors.black.withValues(alpha: 0.9), 
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.5),
+            color: Colors.black.withValues(alpha: 0.5),
             blurRadius: 20,
             offset: const Offset(0, -5),
           ),
@@ -65,7 +65,7 @@ class RouteSelector extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: isSelected 
                         ? const Color(0xFF1E293B)
-                        : Colors.white.withOpacity(0.05),
+                        : Colors.white.withValues(alpha: 0.05),
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
                         color: isSelected ? Colors.blueAccent : Colors.transparent,
@@ -81,7 +81,7 @@ class RouteSelector extends StatelessWidget {
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: isSelected ? Colors.blueAccent.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
+                                  color: isSelected ? Colors.blueAccent.withValues(alpha: 0.2) : Colors.grey.withValues(alpha: 0.2),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(
@@ -97,7 +97,7 @@ class RouteSelector extends StatelessWidget {
                               Text(
                                 route.formattedDuration,
                                 style: TextStyle(
-                                  color: isSelected ? const Color(0xFF34D399) : Colors.white.withOpacity(0.9),
+                                  color: isSelected ? const Color(0xFF34D399) : Colors.white.withValues(alpha: 0.9),
                                   fontWeight: FontWeight.w800,
                                   fontSize: 16,
                                 ),
@@ -106,7 +106,7 @@ class RouteSelector extends StatelessWidget {
                               Text(
                                 route.formattedDistance,
                                 style: TextStyle(
-                                  color: Colors.white.withOpacity(0.6),
+                                  color: Colors.white.withValues(alpha: 0.6),
                                   fontSize: 12,
                                 ),
                               ),

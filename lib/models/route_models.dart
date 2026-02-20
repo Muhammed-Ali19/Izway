@@ -5,9 +5,10 @@ class RouteStep {
   final String name; 
   final double distance; 
   final double duration;
-  final String maneuverType; // "turn", "new name", "depart"...
-  final String maneuverModifier; // "right", "left", "slight right"...
+  final String maneuverType; 
+  final String maneuverModifier;
   final LatLng location; 
+  final int pointIndex;
 
   RouteStep({
     required this.instruction,
@@ -17,6 +18,7 @@ class RouteStep {
     required this.maneuverType,
     required this.maneuverModifier,
     required this.location,
+    required this.pointIndex,
   });
 
   String get formattedDistance {
@@ -34,11 +36,11 @@ class RouteInfo {
   final String label;
   
   // Nouveaux champs pour l'International
-  final List<String> countries; // Code ISO ou Nom
+  List<String> countries; // Code ISO ou Nom
   final bool hasEUExit; // Si on sort de l'UE
   final double? distanceToBorder; // Prochaine frontière en m
   final List<int>? speedLimits; // Liste des vitesses (si dispo)
-  final List<MapEntry<int, String>>? borderCrossings; // Index du point -> Nouveau Pays
+  List<MapEntry<int, String>>? borderCrossings; // Index du point -> Nouveau Pays
   final List<RouteStep> steps; // Instructions de guidage
 
   RouteInfo({

@@ -3,11 +3,10 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../models/route_models.dart';
+import '../utils/api_config.dart';
 
 class SearchService {
-  static const String _baseUrl = kReleaseMode 
-      ? 'https://muhammed-ali.fr/web/api.php' 
-      : 'http://127.0.0.1:8001/api.php';
+  static final String _baseUrl = ApiConfig.baseUrl;
 
   // Rechercher des lieux via Nominatim
   Future<List<SearchResult>> searchPlaces(String query, LatLng? currentPosition) async {
@@ -37,7 +36,7 @@ class SearchService {
           'query': query,
           if (viewBoxStr.isNotEmpty) 'viewbox': viewBoxStr
         })
-      ).timeout(const Duration(seconds: 5));
+      ).timeout(ApiConfig.searchTimeout);
       
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
@@ -66,7 +65,7 @@ class SearchService {
         }).toList();
       }
     } catch (e) {
-      print("Erreur search: $e");
+      debugPrint("Search error: $e");
     }
     
     return [];
@@ -91,7 +90,7 @@ class SearchService {
         return data['address']['country'] ?? "?";
       }
     } catch (e) {
-      print("Erreur getCountryCode: $e");
+      debugPrint("getCountryCode error: $e");
     }
     return "?";
   }

@@ -4,54 +4,35 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../models/route_models.dart';
 import 'direction_translator.dart';
+import '../utils/api_config.dart';
 
 class RouteService {
   final http.Client _client = http.Client();
-  static const String _proxyUrl = kReleaseMode 
-      ? 'https://muhammed-ali.fr/web/api.php' 
-      : 'http://127.0.0.1:8001/api.php';
+  static final String _proxyUrl = ApiConfig.baseUrl;
 
   // Calculer plusieurs routes avec alternatives
   Future<List<RouteInfo>> calculateRoutes(LatLng start, LatLng destination) async {
     List<RouteInfo> allRoutes = [];
     
     try {
-      // 1. Chercher le trajet "Autoroute" + 2 Alternatives
-      print("DEBUG: Fetching 'Autoroute'...");
-      final autoroutes = await _safeFetchValhallaRoutes(start, destination, labelPrefix: "Autoroute", profile: "auto", alternates: 2);
-      print("DEBUG: 'Autoroute' found: ${autoroutes.length}");
+      final autoroutes = await _safeFetchValhallaRoutes(start, destination, labelPrefix: "Autoroute", profile: "auto", alternates: 1);
       for (var r in autoroutes) {
         if (_isDifferentRoute(r, allRoutes)) {
           allRoutes.add(r);
-          print("DEBUG: Added Autoroute (${r.label}) - ${r.distance}m");
-        } else {
-          print("DEBUG: Skipped Autoroute (${r.label}) - Duplicate");
         }
       }
       
-      // 2. Chercher le trajet "Nationale"
-      print("DEBUG: Fetching 'Nationale'...");
       final nationales = await _safeFetchValhallaRoutes(start, destination, labelPrefix: "Nationale", profile: "auto", avoidHighways: true);
-      print("DEBUG: 'Nationale' found: ${nationales.length}");
       for (var r in nationales) {
         if (_isDifferentRoute(r, allRoutes)) {
           allRoutes.add(r);
-           print("DEBUG: Added Nationale (${r.label}) - ${r.distance}m");
-        } else {
-           print("DEBUG: Skipped Nationale (${r.label}) - Duplicate");
         }
       }
 
-      // 3. Option: Sans Péage
-      print("DEBUG: Fetching 'Sans Péage'...");
       final sansPeage = await _safeFetchValhallaRoutes(start, destination, labelPrefix: "Sans Péage", profile: "auto", avoidTolls: true);
-      print("DEBUG: 'Sans Péage' found: ${sansPeage.length}");
       for (var r in sansPeage) {
         if (_isDifferentRoute(r, allRoutes)) {
           allRoutes.add(r);
-          print("DEBUG: Added Sans Péage (${r.label}) - ${r.distance}m");
-        } else {
-          print("DEBUG: Skipped Sans Péage (${r.label}) - Duplicate");
         }
       }
 
@@ -65,7 +46,7 @@ class RouteService {
       //   }
       // }
     } catch (e) {
-      print("Erreur critique calcul routes Valhalla: $e");
+      debugPrint("Valhalla critical error: $e");
     }
     
     return allRoutes;
@@ -92,7 +73,7 @@ class RouteService {
         alternates: alternates,
       );
     } catch (e) {
-      print("Erreur Valhalla ($labelPrefix): $e");
+      debugPrint("Valhalla error ($labelPrefix): $e");
       return [];
     }
   }
@@ -100,13 +81,15 @@ class RouteService {
   // Vérifier si une route est différente des routes existantes
   bool _isDifferentRoute(RouteInfo route, List<RouteInfo> existingRoutes) {
     for (var existing in existingRoutes) {
-      // If the label is different (e.g. Autoroute vs Nationale), we allow it!
-      // This ensures the user sees the "Autoroute" option even if it happens to be the same path as "Nationale".
+      // Si les libellés sont différents (ex: Autoroute vs Nationale), on garde les deux !
+      // Cela permet à l'utilisateur de choisir explicitement son mode de transport.
       if (route.label != existing.label) continue;
 
-      // Otherwise, check for geometry/time duplicates
-      if ((route.distance - existing.distance).abs() < 1 && 
-          (route.duration - existing.duration).abs() < 1) {
+      // Sinon, on compare la durée et la distance pour éviter les vrais doublons géométriques
+      final double timeDiff = (route.duration - existing.duration).abs();
+      final double distDiff = (route.distance - existing.distance).abs();
+      
+      if (timeDiff < 30 && distDiff < 500) {
         return false;
       }
     }
@@ -155,10 +138,6 @@ class RouteService {
       "annotations": ["admins", "maxspeed"]
     };
 
-    if (kDebugMode) {
-      print("DEBUG: Fetching Valhalla Route ($labelPrefix)...");
-      print("DEBUG: Payload: ${json.encode(jsonPayload)}");
-    }
 
     final response = await _client.post(
       Uri.parse(_proxyUrl),
@@ -167,12 +146,8 @@ class RouteService {
         'action': 'route_proxy',
         'payload': jsonPayload
       }),
-    ).timeout(const Duration(seconds: 15));
+    ).timeout(ApiConfig.routeTimeout);
     
-    if (kDebugMode) {
-       print("DEBUG: Response Status ($labelPrefix): ${response.statusCode}");
-       // print("DEBUG: Response Body: ${response.body}"); // Too verbose
-    }
     
     final data = json.decode(response.body);
     if (data['trip'] == null || data['trip']['legs'] == null) {
@@ -207,8 +182,12 @@ class RouteService {
     List<String> adminIsoCodes = [];
     if (trip['admins'] != null) {
       for (var admin in trip['admins']) {
-        adminIsoCodes.add(admin['iso_3166_1'] ?? "??");
+        String code = admin['iso_3166_1'] ?? "??";
+        adminIsoCodes.add(code);
       }
+      debugPrint("DEBUG RouteService: Found admins: ${adminIsoCodes.join(', ')}");
+    } else {
+      debugPrint("DEBUG RouteService: NO ADMINS FOUND IN TRIP");
     }
 
     int globalPointIndex = 0;
@@ -229,12 +208,14 @@ class RouteService {
            if (lastAdminIndex != -1 && currentAdminIndex != lastAdminIndex) {
              if (currentAdminIndex < adminIsoCodes.length) {
                String country = adminIsoCodes[currentAdminIndex];
-               print("DEBUG: Valhalla Parsed Border -> $country at index ${globalPointIndex + j}");
                borderCrossings.add(MapEntry(globalPointIndex + j, country));
+               debugPrint("DEBUG RouteService: BORDER CROSSING detected at index ${globalPointIndex + j} to $country");
              }
            }
            lastAdminIndex = currentAdminIndex;
         }
+      } else {
+        debugPrint("DEBUG RouteService: NO ADMINS ANNOTATION IN LEG");
       }
       
       globalPointIndex += decodedPoints.length;
@@ -245,9 +226,6 @@ class RouteService {
           final String original = maneuver['instruction'] ?? "";
           final String instr = DirectionTranslator.translate(original);
           
-          if (kDebugMode) {
-             print("DEBUG: [Maneuver] $original -> $instr");
-          }
           
           allSteps.add(RouteStep(
             instruction: instr,
@@ -257,27 +235,17 @@ class RouteService {
             maneuverType: maneuver['type']?.toString() ?? "move",
             maneuverModifier: "", 
             location: decodedPoints[startIdx < decodedPoints.length ? startIdx : 0],
+            pointIndex: globalPointIndex - decodedPoints.length + startIdx,
           ));
         }
       }
       
       List<int> legLimits = List.filled(decodedPoints.length, 0);
       if (leg['annotation'] != null && leg['annotation']['maxspeed'] != null) {
-         final List<dynamic> speeds = leg['annotation']['maxspeed'];
-         if (kDebugMode) {
-            print("DEBUG: Leg $i - Points: ${decodedPoints.length}, Speeds: ${speeds.length}");
-            // print("DEBUG: Speeds sample: ${speeds.take(10).toList()}");
-         }
-         
-         // Valhalla maxspeed is per-edge (segment between two points).
-         // Point N has speed from Edge N-1? Or Edge N?
-         // Usually: annotations are for the edge ending at this point, or starting?
-         // Let's assume 1:1 for now but safety check.
-         for (int j = 0; j < speeds.length && j < decodedPoints.length; j++) {
-           legLimits[j] = (speeds[j] as num).toInt();
-         }
-      } else {
-         if (kDebugMode) print("DEBUG: Leg $i - NO maxspeed annotation found.");
+        final List<dynamic> speeds = leg['annotation']['maxspeed'];
+        for (int j = 0; j < speeds.length && j < decodedPoints.length; j++) {
+          legLimits[j] = (speeds[j] as num).toInt();
+        }
       }
       allSpeedLimits.addAll(legLimits);
     }
@@ -326,7 +294,11 @@ class RouteService {
       do { b = encoded.codeUnitAt(index++) - 63; result |= (b & 31) << shift; shift += 5; } while (b >= 32);
       lng += ((result & 1) != 0 ? ~(result >> 1) : (result >> 1)).toSigned(32);
       final double pLat = lat / precision, pLng = lng / precision;
-      if (pLat >= -90.0 && pLat <= 90.0 && pLng >= -180.0 && pLng <= 180.0) points.add(LatLng(pLat, pLng)); else break;
+      if (pLat >= -90.0 && pLat <= 90.0 && pLng >= -180.0 && pLng <= 180.0) {
+        points.add(LatLng(pLat, pLng));
+      } else {
+        break;
+      }
     }
     return points;
   }

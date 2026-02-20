@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
+
+import '../utils/api_config.dart';
 
 class CountrySegment {
   final String countryCode;
@@ -38,7 +41,7 @@ class CountryService {
     if (samples.last != routePoints.last) samples.add(routePoints.last);
 
     // 2. Sequential Fetch with delay (to respect Nominatim 1req/s)
-    print("COUNTRY: Fetching ${samples.length} points sequentially...");
+    debugPrint("COUNTRY: Fetching ${samples.length} points sequentially via Proxy...");
     String currentCode = "";
     
     for (int i = 0; i < samples.length; i++) {
@@ -48,11 +51,9 @@ class CountryService {
         currentCode = code;
       }
       
-      // Petit délai si on n'a pas fini et que c'était pas du cache (l'implémentation de _getCountryCode gère le cache)
-      // On rajoute un petit sleep de sécurité si on enchaîne les requêtes réelles
+      // Delay to avoid backend spamming OS/Nominatim
       if (i < samples.length - 1) {
-         // On pourrait optimiser en ne dormant que si la dernière requête était longue
-         await Future.delayed(const Duration(milliseconds: 1000));
+         await Future.delayed(const Duration(milliseconds: 500));
       }
     }
     
@@ -60,32 +61,32 @@ class CountryService {
   }
 
   Future<String> _getCountryCode(LatLng pos) async {
-    // Clé de cache grossière (1 decimal place) pour regrouper les zones
     String key = "${pos.latitude.toStringAsFixed(1)},${pos.longitude.toStringAsFixed(1)}";
     if (_cache.containsKey(key)) return _cache[key]!;
 
     try {
-      final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/reverse?format=json&lat=${pos.latitude}&lon=${pos.longitude}&zoom=3'
-      );
-      
-      final response = await _client.get(
-        url, 
-        headers: {'User-Agent': 'com.alihirlak.gpsfrontiere'}
-      ).timeout(const Duration(seconds: 4));
+      final response = await _client.post(
+        Uri.parse(ApiConfig.baseUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'action': 'reverse_proxy',
+          'lat': pos.latitude,
+          'lon': pos.longitude,
+        })
+      ).timeout(const Duration(seconds: 10));
       
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        if (data == null || data['address'] == null) return "?";
+        
         String countryCode = data['address']['country_code'] ?? "?";
         countryCode = countryCode.toUpperCase();
         
-        // Convertir en drapeau (emoji) ? Ou juste garder le code.
-        // On retourne le code ISO (ex: FR, DE, TR)
         _cache[key] = countryCode;
         return countryCode;
       }
     } catch (e) {
-      print("Erreur country reverse: $e");
+      debugPrint("Erreur country reverse (Proxy): $e");
     }
     return "?";
   }

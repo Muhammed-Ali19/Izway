@@ -5,6 +5,7 @@ class TripSummary extends StatelessWidget {
   final bool isLoading;
   final String? nextBorderDistance;
   final String? nextBorderFlag;
+  final String? waitTime;
 
   const TripSummary({
     super.key,
@@ -12,6 +13,7 @@ class TripSummary extends StatelessWidget {
     this.isLoading = false,
     this.nextBorderDistance,
     this.nextBorderFlag,
+    this.waitTime,
   });
 
   @override
@@ -19,15 +21,15 @@ class TripSummary extends StatelessWidget {
     if (countryFlags.isEmpty && !isLoading) return const SizedBox.shrink();
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E293B), // Slate
-        borderRadius: BorderRadius.circular(12),
+        color: const Color(0xFF1E293B).withValues(alpha: 0.9), // Slate
+        borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 15,
-            offset: const Offset(0, 6),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -35,36 +37,25 @@ class TripSummary extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            "ITINÉRAIRE",
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.5),
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(height: 12),
           if (isLoading && countryFlags.isEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
+              padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(
                 children: [
                   const SizedBox(
-                    width: 14,
-                    height: 14,
+                    width: 12,
+                    height: 12,
                     child: CircularProgressIndicator(
                       strokeWidth: 2, 
                       color: Colors.blueAccent,
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
                   Text(
-                    "Analyse des régions...", 
+                    "Analyse...", 
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.6), 
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
+                      fontSize: 11,
                     ),
                   ),
                 ],
@@ -81,21 +72,14 @@ class TripSummary extends StatelessWidget {
                   return Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(flag, style: const TextStyle(fontSize: 24)),
-                      ),
+                      Text(flag, style: const TextStyle(fontSize: 14)),
                       if (i < countryFlags.length - 1)
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
                           child: Icon(
                             Icons.chevron_right_rounded, 
                             color: Colors.white.withValues(alpha: 0.2), 
-                            size: 20
+                            size: 14
                           ),
                         ),
                     ],
@@ -103,6 +87,26 @@ class TripSummary extends StatelessWidget {
                 }).toList(),
               ),
             ),
+          ],
+          
+          if (nextBorderDistance != null) ...[
+             const SizedBox(height: 4),
+             Row(
+               mainAxisSize: MainAxisSize.min,
+               children: [
+                 Text(nextBorderFlag ?? "🌍", style: const TextStyle(fontSize: 14)),
+                 const SizedBox(width: 6),
+                 Text(
+                   nextBorderDistance!,
+                   style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
+                 ),
+                  const SizedBox(width: 8),
+                  Text(
+                    waitTime != null ? "Attente : $waitTime" : "Attente : ...",
+                    style: const TextStyle(color: Colors.amberAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
+               ],
+             ),
           ],
         ],
       ),

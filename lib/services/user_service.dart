@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:uuid/uuid.dart';
+import '../utils/api_config.dart';
 
 class Peer {
   final String id;
@@ -24,9 +25,7 @@ class Peer {
 
 class UserService {
   static const String _userKey = 'user_unique_id';
-  static const String _baseUrl = kReleaseMode 
-      ? 'https://muhammed-ali.fr/web/api.php' 
-      : 'http://127.0.0.1:8001/api.php';
+  static final String _baseUrl = ApiConfig.baseUrl;
   
   String? _userId;
 
@@ -57,14 +56,14 @@ class UserService {
           'latitude': position.latitude,
           'longitude': position.longitude,
         }),
-      ).timeout(const Duration(seconds: 3));
+      ).timeout(ApiConfig.defaultTimeout);
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.map((item) => Peer.fromJson(item)).toList();
       }
     } catch (e) {
-      print("Erreur UserService: $e");
+      debugPrint("Erreur UserService: $e");
     }
     return [];
   }

@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/alert.dart';
+import '../utils/api_config.dart';
 
 class AlertService {
   static const String _alertsKey = 'alerts';
@@ -11,9 +12,7 @@ class AlertService {
   static const String _hiddenAlertsKey = 'hidden_alerts';
   
   // Production URL
-  static const String _baseUrl = kReleaseMode 
-      ? 'https://muhammed-ali.fr/web/api.php' 
-      : 'http://127.0.0.1:8001/api.php';
+  static final String _baseUrl = ApiConfig.baseUrl;
   
   final List<Alert> _alerts = [];
   final Set<String> _votedIds = {};
@@ -85,9 +84,9 @@ class AlertService {
           'description': description,
           'user_id': 'user_flutter' 
         }),
-      ).timeout(const Duration(seconds: 5));
+      ).timeout(ApiConfig.searchTimeout);
     } catch (e) {
-      print("Erreur envoi PHP: $e");
+      debugPrint("Erreur envoi PHP: $e");
       // On garde en local si échec
     }
 
@@ -95,7 +94,7 @@ class AlertService {
 
   // Supprimer une alerte
   Future<Map<String, dynamic>> removeAlert(String id) async {
-    print("ALERT: Tentative de suppression de $id...");
+    debugPrint("ALERT: Tentative de suppression de $id...");
     
     // 1. Marquer comme caché/supprimé localement définitivement
     _hiddenIds.add(id);
@@ -121,10 +120,10 @@ class AlertService {
           'action': 'delete_alert',
           'id': id,
         }),
-      ).timeout(const Duration(seconds: 5));
+      ).timeout(ApiConfig.searchTimeout);
       
-      print("Suppression API ID: $id - Status: ${response.statusCode}");
-      print("Réponse API (Brute): ${response.body}");
+      debugPrint("Suppression API ID: $id - Status: ${response.statusCode}");
+      debugPrint("Réponse API (Brute): ${response.body}");
       
       final data = json.decode(response.body);
       if (data['success'] == true) {
@@ -134,7 +133,7 @@ class AlertService {
       }
       return data;
     } catch (e) {
-      print("Erreur critique suppression PHP: $e");
+      debugPrint("Erreur critique suppression PHP: $e");
       return {"success": false, "error": e.toString()};
     }
   }
@@ -173,9 +172,9 @@ class AlertService {
           'id': id,
           'type': up ? 'up' : 'down'
         }),
-      ).timeout(const Duration(seconds: 5));
+      ).timeout(ApiConfig.searchTimeout);
     } catch (e) {
-      print("Erreur vote: $e");
+      debugPrint("Erreur vote: $e");
     }
   }
 
@@ -192,13 +191,13 @@ class AlertService {
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl?action=get&lat=${pos.latitude}&lon=${pos.longitude}')
-      ).timeout(const Duration(seconds: 3));
+      ).timeout(ApiConfig.defaultTimeout);
       
       if (response.statusCode == 200) {
          final dynamic data = json.decode(response.body);
          
          if (data is List) {
-            print("Fetched ${data.length} alerts from backend");
+            debugPrint("Fetched ${data.length} alerts from backend");
             // On récupère les IDs du backend et on filtre ceux supprimés/cachés
             final fetchedAlerts = data.map((item) => Alert(
               id: item['id'],
@@ -241,7 +240,7 @@ class AlertService {
          }
       }
     } catch (e) {
-      print("Erreur sync PHP: $e");
+      debugPrint("Erreur sync PHP: $e");
     }
   }
 

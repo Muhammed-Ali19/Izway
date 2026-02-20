@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'package:flutter/foundation.dart';
 import '../models/alert.dart';
+import '../utils/api_config.dart';
 
 class TrafficService {
   final http.Client _client = http.Client();
@@ -83,7 +85,7 @@ class TrafficService {
         }
       }
     } catch (e) {
-      print("Erreur Route Overpass: $e");
+      debugPrint("Route Overpass error: $e");
     }
 
     return allAlerts;
@@ -131,9 +133,32 @@ class TrafficService {
         )).toList();
       }
     } catch (e) {
-      print("Erreur Overpass Radar: $e");
+      debugPrint("Overpass Radar error: $e");
     }
     
     return [];
+  }
+
+  // Fetch real-time border wait times from backend proxy
+  Future<Map<String, dynamic>?> fetchBorderWait(LatLng position, String name) async {
+    try {
+      final response = await http.post(
+        Uri.parse(ApiConfig.baseUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'action': 'get_border_wait',
+          'lat': position.latitude,
+          'lon': position.longitude,
+          'name': name,
+        })
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      }
+    } catch (e) {
+      debugPrint("fetchBorderWait error: $e");
+    }
+    return null;
   }
 }

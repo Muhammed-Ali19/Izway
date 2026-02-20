@@ -19,7 +19,6 @@ class ModernSearchBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(top: 60, left: 16, right: 16),
       decoration: BoxDecoration(
         color: const Color(0xFF1E293B), // Slate
         borderRadius: BorderRadius.circular(12),

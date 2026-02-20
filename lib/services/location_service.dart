@@ -1,5 +1,6 @@
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:flutter/foundation.dart';
 
 class LocationService {
   // Vérifier et demander les permissions avec retour détaillé
@@ -30,14 +31,12 @@ class LocationService {
 
   Future<Position?> getCurrentPosition() async {
     try {
-      print("Location: Tentative de récupération position...");
       return await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.bestForNavigation,
         timeLimit: const Duration(seconds: 15),
       ).timeout(const Duration(seconds: 16));
     } catch (e) {
-      print("Location: ERREUR ou TIMEOUT ($e). Utilisation du FALLBACK Paris.");
-      // Fallback Position
+      debugPrint("Location error: $e");
       return Position(
         latitude: 48.8566, longitude: 2.3522,
         timestamp: DateTime.now(),
